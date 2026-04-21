@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Members &middot; Shop Ops{% endblock %}
+{% block content %}
+<h1>Staff / Team Members</h1>
+<p class="subtitle">Staff who can be assigned tasks in the system.</p>
+
+<form method="post" class="form-card">
+  <div class="row">
+    <label>Name <span class="req">*</span>
+      <input type="text" name="name" required>
+    </label>
+    <label>Role
+      <input type="text" name="role" placeholder="e.g. Logistics">
+    </label>
+    <label>Email
+      <input type="email" name="email" placeholder="name@shop.com">
+    </label>
+    <div class="form-actions end">
+      <button class="btn primary" type="submit">Add Member</button>
+    </div>
+  </div>
+</form>
+
+<table class="data-table">
+  <thead>
+    <tr><th>ID</th><th>Name</th><th>Role</th><th>Email</th></tr>
+  </thead>
+  <tbody>
+  {% for m in members %}
+    <tr>
+      <td>{{ m.id }}</td>
+      <td>{{ m.name }}</td>
+      <td>{{ m.role or '—' }}</td>
+      <td>{{ m.email or '—' }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4">No members yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
