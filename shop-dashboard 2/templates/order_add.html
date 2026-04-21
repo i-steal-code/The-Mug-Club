@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Add Order &middot; Shop Ops{% endblock %}
+{% block content %}
+<h1>Add Order</h1>
+
+<form method="post" class="form-card">
+  <label>Customer Name <span class="req">*</span>
+    <input type="text" name="customer_name" required maxlength="120">
+  </label>
+
+  <label>Product <span class="req">*</span>
+    <select name="product_id" required>
+      <option value="">— Choose product —</option>
+      {% for p in products %}
+        <option value="{{ p.id }}">{{ p.name }} (${{ '%.2f' % p.selling_price }})</option>
+      {% endfor %}
+    </select>
+  </label>
+
+  <div class="row">
+    <label>Quantity
+      <input type="number" name="quantity" min="1" value="1">
+    </label>
+    <label>Order Status
+      <select name="order_status">
+        {% for s in order_statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Payment Status
+      <select name="payment_status">
+        {% for s in payment_statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <div class="form-actions">
+    <button class="btn primary" type="submit">Add Order</button>
+    <a class="btn ghost" href="{{ url_for('orders_list') }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}
