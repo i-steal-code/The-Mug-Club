@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Add Product &middot; Shop Ops{% endblock %}
+{% block content %}
+<h1>Add Product</h1>
+
+<form method="post" class="form-card">
+  <label>Product Name <span class="req">*</span>
+    <input type="text" name="name" required maxlength="120">
+  </label>
+
+  <label>Category
+    <input type="text" name="category" placeholder="e.g. Apparel, Electronics">
+  </label>
+
+  <div class="row">
+    <label>Stock Quantity
+      <input type="number" name="stock_quantity" min="0" value="0">
+    </label>
+    <label>Cost Price ($)
+      <input type="number" step="0.01" min="0" name="cost_price" value="0">
+    </label>
+    <label>Selling Price ($)
+      <input type="number" step="0.01" min="0" name="selling_price" value="0">
+    </label>
+  </div>
+
+  <div class="form-actions">
+    <button class="btn primary" type="submit">Add Product</button>
+    <a class="btn ghost" href="{{ url_for('inventory_list') }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}
