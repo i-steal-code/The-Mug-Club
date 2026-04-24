@@ -143,9 +143,9 @@ def _connect_kwargs_from_database_url(url: str) -> dict:
     # on hosts like Render with "Network is unreachable" to Supabase.
     raise RuntimeError(
         f"No IPv4 (A) address found for {host!r} from this environment. "
-        "Use Supabase's connection pooler URI (Database → Connection string → "
-        "Session pooler, or Transaction pooler on port 6543), or confirm the project "
-        "has a public IPv4 A record for the direct host."
+        "Use Supabase → Database → Connection string → Session pooler "
+        "(IPv4-proxied; user like postgres.<project-ref> on port 5432), or Transaction "
+        "mode pooler on port 6543, or confirm a public IPv4 A record for the direct host."
     )
 
 

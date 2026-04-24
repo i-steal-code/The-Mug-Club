@@ -340,3 +340,23 @@ secret key is set to a random password
 # If A exists but connect still used v6, we no longer fall back to host-only; must set hostaddr.
 
 v0.1.8
+# Document Session pooler in .env.example + README: postgres.<ref> @ aws-REGION.pooler.supabase.com:5432
+# (Supabase: IPv4 proxied; use for Render). RuntimeError text updated for Session vs Transaction 6543.
+
+v0.1.8
+from supabase connection string session pooler:
+1. Connection string
+Copy the connection details for your database.
+Details:
+Shared Pooler
+Only use on a IPv4 networkSession pooler connections are IPv4 proxied for free.
+Use Direct Connection if connecting via an IPv6 network.
+host:aws-1-ap-southeast-1.pooler.supabase.com
+port:5432
+database:postgres
+user:postgres.vqawahybaepcnfehlimn
+Code:
+File: Code
+```
+postgresql://postgres.vqawahybaepcnfehlimn:[YOUR-PASSWORD]@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres
+```
