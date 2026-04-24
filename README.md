@@ -2,7 +2,7 @@
 
 Operations dashboard for inventory, orders, finance, tasks, and recipes.
 
-**Status: v0.1.4 (development).**
+**Status: v0.1.5 (development).**
 
 ## Stack
 
@@ -29,7 +29,7 @@ Open `http://127.0.0.1:5000`.
 
 1. Create a **Supabase** database and note the connection string.
 2. New **Web Service** on Render: connect this repo, build `pip install -r requirements.txt`, start command from `Procfile` (`gunicorn` binds to `$PORT`).
-3. Set environment variables: `DATABASE_URL`, `SECRET_KEY`.
+3. Set environment variables: `DATABASE_URL`, `SECRET_KEY` — paste the Supabase **URI** exactly (do not add `[ ]` around the hostname; only literal IPv6 uses brackets). If `urlparse` / startup fails with a host like `[something-invalid]`, fix the env value.
 
 **Python version:** New Render services default to **Python 3.14**, while `psycopg2-binary` does not ship compatible wheels for 3.14 yet (you may see `ImportError: ... undefined symbol: _PyInterpreterState_Get`). This repo includes a root **`.python-version`** file set to `3.12.6` (see [Render’s Python version docs](https://render.com/docs/python-version)). If the dashboard still builds with 3.14, set **`PYTHON_VERSION`** = `3.12.6` on the service (that override takes precedence).
 

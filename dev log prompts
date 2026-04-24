@@ -225,3 +225,60 @@ v0.1.4
     # a hostname (e.g. db.*.supabase.co) or otherwise not a valid IP string. Refactored to _host_is_literal_ip().
 
 v0.1.5
+2026-04-24T01:59:31.748121151Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/arbiter.py", line 58, in __init__
+2026-04-24T01:59:31.748198777Z     self.setup(app)
+2026-04-24T01:59:31.748205268Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/arbiter.py", line 118, in setup
+2026-04-24T01:59:31.748324427Z     self.app.wsgi()
+2026-04-24T01:59:31.7483676Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/base.py", line 67, in wsgi
+2026-04-24T01:59:31.748468108Z     self.callable = self.load()
+2026-04-24T01:59:31.748477819Z                     ^^^^^^^^^^^
+2026-04-24T01:59:31.748481559Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/wsgiapp.py", line 58, in load
+2026-04-24T01:59:31.748564846Z     return self.load_wsgiapp()
+2026-04-24T01:59:31.748569506Z            ^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:59:31.748586748Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/wsgiapp.py", line 48, in load_wsgiapp
+2026-04-24T01:59:31.748715808Z     return util.import_app(self.app_uri)
+2026-04-24T01:59:31.748722809Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:59:31.748726929Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/util.py", line 371, in import_app
+2026-04-24T01:59:31.748880931Z     mod = importlib.import_module(module)
+2026-04-24T01:59:31.748891382Z           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:59:31.748894842Z   File "/opt/render/project/python/Python-3.12.6/lib/python3.12/importlib/__init__.py", line 90, in import_module
+2026-04-24T01:59:31.749106719Z     return _bootstrap._gcd_import(name[level:], package, level)
+2026-04-24T01:59:31.74911801Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:59:31.7491221Z   File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+2026-04-24T01:59:31.74912539Z   File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+2026-04-24T01:59:31.749128441Z   File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+2026-04-24T01:59:31.749131571Z   File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+2026-04-24T01:59:31.749134461Z   File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+2026-04-24T01:59:31.749137301Z   File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+2026-04-24T01:59:31.749267701Z   File "/opt/render/project/src/app.py", line 183, in <module>
+2026-04-24T01:59:31.749272792Z     ensure_schema_and_seed()
+2026-04-24T01:59:31.749274952Z   File "/opt/render/project/src/app.py", line 150, in ensure_schema_and_seed
+2026-04-24T01:59:31.749367809Z     conn = get_conn()
+2026-04-24T01:59:31.749396082Z            ^^^^^^^^^^
+2026-04-24T01:59:31.749400512Z   File "/opt/render/project/src/app.py", line 119, in get_conn
+2026-04-24T01:59:31.74950172Z     kwargs = _connect_kwargs_from_database_url(url)
+2026-04-24T01:59:31.749517171Z              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:59:31.749521672Z   File "/opt/render/project/src/app.py", line 71, in _connect_kwargs_from_database_url
+2026-04-24T01:59:31.749619179Z     parsed = urlparse(url)
+2026-04-24T01:59:31.74962529Z              ^^^^^^^^^^^^^
+2026-04-24T01:59:31.74963151Z   File "/opt/render/project/python/Python-3.12.6/lib/python3.12/urllib/parse.py", line 395, in urlparse
+2026-04-24T01:59:31.749781722Z     splitresult = urlsplit(url, scheme, allow_fragments)
+2026-04-24T01:59:31.749788203Z                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:59:31.749794773Z   File "/opt/render/project/python/Python-3.12.6/lib/python3.12/urllib/parse.py", line 500, in urlsplit
+2026-04-24T01:59:31.749980978Z     _check_bracketed_host(bracketed_host)
+2026-04-24T01:59:31.749994989Z   File "/opt/render/project/python/Python-3.12.6/lib/python3.12/urllib/parse.py", line 446, in _check_bracketed_host
+2026-04-24T01:59:31.750164022Z     ip = ipaddress.ip_address(hostname) # Throws Value Error if not IPv6 or IPv4
+2026-04-24T01:59:31.750178653Z          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:59:31.750182214Z   File "/opt/render/project/python/Python-3.12.6/lib/python3.12/ipaddress.py", line 54, in ip_address
+2026-04-24T01:59:31.750366808Z     raise ValueError(f'{address!r} does not appear to be an IPv4 or IPv6 address')
+2026-04-24T01:59:31.750371799Z ValueError: 'my-boss-has-a-5head' does not appear to be an IPv4 or IPv6 address
+2026-04-24T01:59:43.34373807Z ==> Exited with status 1
+2026-04-24T01:59:43.346470243Z ==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
+2026-04-24T01:59:51.057224409Z ==> Running 'gunicorn app:app'
+
+# v0.1.5 fix: ValueError is NOT from our code — urllib.parse sees [my-boss-has-a-5head] as a
+# bracketed host (invalid IPv6). Cause: DATABASE_URL used [ ] around a non-IPv6 host, or a
+# password with unencoded special chars. Use Supabase URI as-is; don't wrap db.*.supabase.co in brackets.
+# App now catches urlparse ValueError and raises a clearer RuntimeError.
+
+v0.1.6

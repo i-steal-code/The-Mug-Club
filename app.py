@@ -68,7 +68,16 @@ def _connect_kwargs_from_database_url(url: str) -> dict:
     AAAA first → "Network is unreachable". Passing hostaddr=<IPv4> with host=<FQDN>
     forces IPv4 while keeping the correct TLS server name.
     """
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+    except ValueError as e:
+        raise RuntimeError(
+            "Invalid DATABASE_URL: the URI is malformed. Common causes: (1) square brackets [ ] "
+            "around the hostname—only use [ ] for a literal IPv6 address, never wrap "
+            "db.xxxxx.supabase.co in brackets. (2) A database password containing @, :, /, ?, #, "
+            "[, ], or & must be percent-encoded in the URI. Copy the connection string from "
+            f"Supabase (Database settings) and paste it unchanged. Parser error: {e}"
+        ) from e
     host = parsed.hostname
     port = parsed.port or 5432
     path = parsed.path or "/postgres"
