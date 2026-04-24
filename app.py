@@ -35,6 +35,19 @@ PAYMENT_STATUSES = ["Unpaid", "Paid", "Refunded"]
 CLOUD_TYPES = ("coffee", "matcha")
 
 
+def _host_is_literal_ip(host: str) -> bool:
+    """
+    True if host is already an IPv4 or IPv6 address string.
+    `ipaddress.ip_address()` raises ValueError for hostnames (e.g. db.xxx.supabase.co),
+    not only for "non-IP" text — a hostname is not a valid single IP object.
+    """
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return True
+
+
 def _first_ipv4_addr(hostname: str, port: int) -> str | None:
     """Return first IPv4 for hostname, or None (e.g. only AAAA on broken IPv6 paths)."""
     try:
@@ -85,11 +98,8 @@ def _connect_kwargs_from_database_url(url: str) -> dict:
     if not host:
         return base
 
-    try:
-        ipaddress.ip_address(host)
+    if _host_is_literal_ip(host):
         return {**base, "host": host}
-    except ValueError:
-        pass
 
     ipv4 = _first_ipv4_addr(host, port)
     if ipv4:

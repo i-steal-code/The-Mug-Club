@@ -220,3 +220,8 @@ error logs:
 2026-04-24T01:41:25.79781572Z 	Is the server running on that host and accepting TCP/IP connections?
 2026-04-24T01:41:25.79781864Z 
 
+v0.1.4
+    # ipaddress.ip_address(s) succeeds for valid IPv4 or IPv6 literals; ValueError if s is
+    # a hostname (e.g. db.*.supabase.co) or otherwise not a valid IP string. Refactored to _host_is_literal_ip().
+
+v0.1.5

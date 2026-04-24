@@ -2,7 +2,7 @@
 
 Operations dashboard for inventory, orders, finance, tasks, and recipes.
 
-**Status: v0.1 (development).**
+**Status: v0.1.4 (development).**
 
 ## Stack
 
