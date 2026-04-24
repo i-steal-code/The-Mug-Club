@@ -281,4 +281,62 @@ v0.1.5
 # password with unencoded special chars. Use Supabase URI as-is; don't wrap db.*.supabase.co in brackets.
 # App now catches urlparse ValueError and raises a clearer RuntimeError.
 
-v0.1.6
+v0.1.7
+2026-04-24T02:15:24.228501232Z     sys.exit(run())
+2026-04-24T02:15:24.228564243Z              ^^^^^
+2026-04-24T02:15:24.228580604Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/wsgiapp.py", line 67, in run
+2026-04-24T02:15:24.228686857Z     WSGIApplication("%(prog)s [OPTIONS] [APP_MODULE]", prog=prog).run()
+2026-04-24T02:15:24.228729568Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/base.py", line 236, in run
+2026-04-24T02:15:24.228899803Z     super().run()
+2026-04-24T02:15:24.228904752Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/base.py", line 72, in run
+2026-04-24T02:15:24.229021656Z     Arbiter(self).run()
+2026-04-24T02:15:24.229039896Z     ^^^^^^^^^^^^^
+2026-04-24T02:15:24.229042856Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/arbiter.py", line 58, in __init__
+2026-04-24T02:15:24.22917319Z     self.setup(app)
+2026-04-24T02:15:24.229215071Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/arbiter.py", line 118, in setup
+2026-04-24T02:15:24.229331794Z     self.app.wsgi()
+2026-04-24T02:15:24.229349875Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/base.py", line 67, in wsgi
+2026-04-24T02:15:24.229467908Z     self.callable = self.load()
+2026-04-24T02:15:24.229606722Z                     ^^^^^^^^^^^
+2026-04-24T02:15:24.229622342Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/wsgiapp.py", line 58, in load
+2026-04-24T02:15:24.229726545Z     return self.load_wsgiapp()
+2026-04-24T02:15:24.229734755Z            ^^^^^^^^^^^^^^^^^^^
+2026-04-24T02:15:24.229739315Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/wsgiapp.py", line 48, in load_wsgiapp
+2026-04-24T02:15:24.229866669Z     return util.import_app(self.app_uri)
+2026-04-24T02:15:24.22988349Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T02:15:24.22989053Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/util.py", line 371, in import_app
+2026-04-24T02:15:24.230082745Z     mod = importlib.import_module(module)
+2026-04-24T02:15:24.230093945Z           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T02:15:24.230097045Z   File "/opt/render/project/python/Python-3.12.6/lib/python3.12/importlib/__init__.py", line 90, in import_module
+2026-04-24T02:15:24.230228229Z     return _bootstrap._gcd_import(name[level:], package, level)
+2026-04-24T02:15:24.23027733Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T02:15:24.2302813Z   File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+2026-04-24T02:15:24.230283341Z   File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+2026-04-24T02:15:24.230294731Z   File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+2026-04-24T02:15:24.230298371Z   File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+2026-04-24T02:15:24.230300391Z   File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+2026-04-24T02:15:24.230302421Z   File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+2026-04-24T02:15:24.230308871Z   File "/opt/render/project/src/app.py", line 192, in <module>
+2026-04-24T02:15:24.230476776Z     ensure_schema_and_seed()
+2026-04-24T02:15:24.230482146Z   File "/opt/render/project/src/app.py", line 159, in ensure_schema_and_seed
+2026-04-24T02:15:24.230661291Z     conn = get_conn()
+2026-04-24T02:15:24.230685721Z            ^^^^^^^^^^
+2026-04-24T02:15:24.230689382Z   File "/opt/render/project/src/app.py", line 129, in get_conn
+2026-04-24T02:15:24.230809475Z     return psycopg2.connect(cursor_factory=extras.RealDictCursor, **kwargs)
+2026-04-24T02:15:24.230861556Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T02:15:24.230865817Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/psycopg2/__init__.py", line 122, in connect
+2026-04-24T02:15:24.23099046Z     conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+2026-04-24T02:15:24.231038491Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T02:15:24.231043491Z psycopg2.OperationalError: connection to server at "db.vqawahybaepcnfehlimn.supabase.co" (2406:da18:243:7429:9ba0:fb3:6f36:99aa), port 5432 failed: Network is unreachable
+2026-04-24T02:15:24.231046751Z 	Is the server running on that host and accepting TCP/IP connections?
+2026-04-24T02:15:24.231049811Z 
+2026-04-24T02:15:26.888096345Z ==> Exited with status 1
+2026-04-24T02:15:26.89288247Z ==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
+
+where database url = postgresql://postgres:my-boss-has-a-5head@db.vqawahybaepcnfehlimn.supabase.co:5432/postgres
+secret key is set to a random password
+
+# v0.1.7 fix: stronger IPv4 resolution (AF_INET + gethostbyname); if still no A record, use pooler URI.
+# If A exists but connect still used v6, we no longer fall back to host-only; must set hostaddr.
+
+v0.1.8

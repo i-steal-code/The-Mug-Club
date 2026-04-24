@@ -49,15 +49,39 @@ def _host_is_literal_ip(host: str) -> bool:
 
 
 def _first_ipv4_addr(hostname: str, port: int) -> str | None:
-    """Return first IPv4 for hostname, or None (e.g. only AAAA on broken IPv6 paths)."""
+    """
+    Return an IPv4 address for hostname for use as libpq hostaddr.
+
+    Some resolvers (e.g. on Render) return AAAA first or only, so a plain
+    getaddrinfo() scan can find no AF_INET even when an A record exists. Request
+    IPv4-only resolution first, then fall back to gethostbyname (A record only).
+    """
+    for resolver in (_ipv4_getaddrinfo_inet, _ipv4_gethostbyname):
+        try:
+            ip = resolver(hostname, port)
+        except OSError:
+            continue
+        if ip:
+            return ip
+    return None
+
+
+def _ipv4_getaddrinfo_inet(hostname: str, port: int) -> str | None:
     try:
-        infos = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+        infos = socket.getaddrinfo(
+            hostname, port, family=socket.AF_INET, type=socket.SOCK_STREAM
+        )
     except OSError:
         return None
-    for family, _, _, _, sockaddr in infos:
-        if family == socket.AF_INET:
-            return sockaddr[0]
+    for _fam, _t, _p, _c, sockaddr in infos:
+        if sockaddr and len(sockaddr) >= 1 and sockaddr[0]:
+            return str(sockaddr[0])
     return None
+
+
+def _ipv4_gethostbyname(hostname: str, _port: int) -> str | None:
+    """Returns IPv4 string from A record only; raises OSError if none."""
+    return socket.gethostbyname(hostname)
 
 
 def _connect_kwargs_from_database_url(url: str) -> dict:
@@ -93,14 +117,16 @@ def _connect_kwargs_from_database_url(url: str) -> dict:
     for key, values in q.items():
         if values and values[0] is not None:
             extra[key] = values[0]
+    for drop in ("port", "host", "user", "password", "dbname"):
+        extra.pop(drop, None)
     if "sslmode" not in q:
         extra["sslmode"] = "require"
 
-    base = {
+    base: dict = {
         "dbname": dbname,
         "user": user,
         "password": password,
-        "port": str(port),
+        "port": int(port),
         **extra,
     }
 
@@ -110,10 +136,17 @@ def _connect_kwargs_from_database_url(url: str) -> dict:
     if _host_is_literal_ip(host):
         return {**base, "host": host}
 
-    ipv4 = _first_ipv4_addr(host, port)
+    ipv4 = _first_ipv4_addr(host, int(port))
     if ipv4:
         return {**base, "host": host, "hostaddr": ipv4}
-    return {**base, "host": host}
+    # Do not fall back to hostname-only: libpq will use IPv6 (AAAA) and often fail
+    # on hosts like Render with "Network is unreachable" to Supabase.
+    raise RuntimeError(
+        f"No IPv4 (A) address found for {host!r} from this environment. "
+        "Use Supabase's connection pooler URI (Database → Connection string → "
+        "Session pooler, or Transaction pooler on port 6543), or confirm the project "
+        "has a public IPv4 A record for the direct host."
+    )
 
 
 def get_conn() -> PgConnection:

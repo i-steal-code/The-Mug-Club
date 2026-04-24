@@ -2,7 +2,7 @@
 
 Operations dashboard for inventory, orders, finance, tasks, and recipes.
 
-**Status: v0.1.5 (development).**
+**Status: v0.1.7 (development).**
 
 ## Stack
 
@@ -35,7 +35,7 @@ Open `http://127.0.0.1:5000`.
 
 On first boot the app applies `schema.sql` and optional `seed.sql` if the database is empty.
 
-**Supabase + Render:** If logs show `connection to server at "db....supabase.co" (2406:... IPv6 ...) ... Network is unreachable`, the host had no usable IPv6 route from Render. This app resolves the hostname to **IPv4** and connects with `hostaddr` (TLS still uses the real hostname). If problems persist, use Supabase’s **connection pooler** URI (port **6543** transaction mode or session pooler) from **Project Settings → Database**, which often behaves better from cloud providers.
+**Supabase + Render:** The app only connects when it can resolve an **IPv4 (A) address** for the DB host, then uses libpq `hostaddr` (TLS SNI still uses the hostname). If you see `Network is unreachable` to IPv6, or `No IPv4 (A) address found`, set **`DATABASE_URL`** to Supabase’s **Session pooler** or **Transaction pooler (port 6543)** from **Project Settings → Database** — the pooler hostname usually works from cloud hosts when `db…supabase.co` does not.
 
 ## Data import
 
