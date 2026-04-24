@@ -65,3 +65,158 @@ here are the error logs from the first deployment:
 2026-04-24T00:37:00.45939962Z ImportError: /opt/render/project/src/.venv/lib/python3.14/site-packages/psycopg2/_psycopg.cpython-314-x86_64-linux-gnu.so: undefined symbol: _PyInterpreterState_Get
 2026-04-24T00:37:02.12616382Z ==> Exited with status 1
 2026-04-24T00:37:02.139863064Z ==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
+
+v0.1.3
+supabase issues
+error logs:
+2026-04-24T01:39:11.538195092Z ==> Using Python version 3.12.6 via /opt/render/project/src/.python-version
+2026-04-24T01:39:11.538211862Z ==> Docs on specifying a Python version: https://render.com/docs/python-version
+2026-04-24T01:39:11.538330399Z ==> Installing Python version 3.12.6...
+2026-04-24T01:39:27.121462555Z ==> Using Poetry version 2.1.3 (default)
+2026-04-24T01:39:27.174116384Z ==> Docs on specifying a Poetry version: https://render.com/docs/poetry-version
+2026-04-24T01:39:27.303143993Z ==> Running build command 'pip install -r requirements.txt'...
+2026-04-24T01:39:28.018779384Z Collecting Flask==3.0.3 (from -r requirements.txt (line 1))
+2026-04-24T01:39:28.020214588Z   Using cached flask-3.0.3-py3-none-any.whl.metadata (3.2 kB)
+2026-04-24T01:39:28.140207792Z Collecting gunicorn==22.0.0 (from -r requirements.txt (line 2))
+2026-04-24T01:39:28.141566222Z   Using cached gunicorn-22.0.0-py3-none-any.whl.metadata (4.4 kB)
+2026-04-24T01:39:28.35920338Z Collecting psycopg2-binary==2.9.9 (from -r requirements.txt (line 3))
+2026-04-24T01:39:28.377023356Z   Using cached psycopg2_binary-2.9.9-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl.metadata (4.4 kB)
+2026-04-24T01:39:28.541833636Z Collecting Werkzeug>=3.0.0 (from Flask==3.0.3->-r requirements.txt (line 1))
+2026-04-24T01:39:28.5430704Z   Using cached werkzeug-3.1.8-py3-none-any.whl.metadata (4.0 kB)
+2026-04-24T01:39:28.670865366Z Collecting Jinja2>=3.1.2 (from Flask==3.0.3->-r requirements.txt (line 1))
+2026-04-24T01:39:28.672067177Z   Using cached jinja2-3.1.6-py3-none-any.whl.metadata (2.9 kB)
+2026-04-24T01:39:28.874140505Z Collecting itsdangerous>=2.1.2 (from Flask==3.0.3->-r requirements.txt (line 1))
+2026-04-24T01:39:28.87541425Z   Using cached itsdangerous-2.2.0-py3-none-any.whl.metadata (1.9 kB)
+2026-04-24T01:39:29.009795944Z Collecting click>=8.1.3 (from Flask==3.0.3->-r requirements.txt (line 1))
+2026-04-24T01:39:29.011101161Z   Using cached click-8.3.3-py3-none-any.whl.metadata (2.6 kB)
+2026-04-24T01:39:29.129260651Z Collecting blinker>=1.6.2 (from Flask==3.0.3->-r requirements.txt (line 1))
+2026-04-24T01:39:29.130497364Z   Using cached blinker-1.9.0-py3-none-any.whl.metadata (1.6 kB)
+2026-04-24T01:39:29.304955501Z Collecting packaging (from gunicorn==22.0.0->-r requirements.txt (line 2))
+2026-04-24T01:39:29.306123071Z   Using cached packaging-26.1-py3-none-any.whl.metadata (3.5 kB)
+2026-04-24T01:39:29.519997035Z Collecting MarkupSafe>=2.0 (from Jinja2>=3.1.2->Flask==3.0.3->-r requirements.txt (line 1))
+2026-04-24T01:39:29.521282361Z   Using cached markupsafe-3.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl.metadata (2.7 kB)
+2026-04-24T01:39:29.527241148Z Using cached flask-3.0.3-py3-none-any.whl (101 kB)
+2026-04-24T01:39:29.528385927Z Using cached gunicorn-22.0.0-py3-none-any.whl (84 kB)
+2026-04-24T01:39:29.529541886Z Using cached psycopg2_binary-2.9.9-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl (3.0 MB)
+2026-04-24T01:39:29.533076228Z Using cached blinker-1.9.0-py3-none-any.whl (8.5 kB)
+2026-04-24T01:39:29.534176895Z Using cached click-8.3.3-py3-none-any.whl (110 kB)
+2026-04-24T01:39:29.535353415Z Using cached itsdangerous-2.2.0-py3-none-any.whl (16 kB)
+2026-04-24T01:39:29.536448932Z Using cached jinja2-3.1.6-py3-none-any.whl (134 kB)
+2026-04-24T01:39:29.537635513Z Using cached werkzeug-3.1.8-py3-none-any.whl (226 kB)
+2026-04-24T01:39:29.538867836Z Using cached packaging-26.1-py3-none-any.whl (95 kB)
+2026-04-24T01:39:29.540054067Z Using cached markupsafe-3.0.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (22 kB)
+2026-04-24T01:39:29.564722786Z Installing collected packages: psycopg2-binary, packaging, MarkupSafe, itsdangerous, click, blinker, Werkzeug, Jinja2, gunicorn, Flask
+2026-04-24T01:39:31.602844842Z Successfully installed Flask-3.0.3 Jinja2-3.1.6 MarkupSafe-3.0.3 Werkzeug-3.1.8 blinker-1.9.0 click-8.3.3 gunicorn-22.0.0 itsdangerous-2.2.0 packaging-26.1 psycopg2-binary-2.9.9
+2026-04-24T01:39:31.630660913Z 
+2026-04-24T01:39:31.630680534Z [notice] A new release of pip is available: 24.2 -> 26.0.1
+2026-04-24T01:39:31.630705845Z [notice] To update, run: pip install --upgrade pip
+2026-04-24T01:39:45.580531472Z ==> Uploading build...
+2026-04-24T01:39:50.204634085Z ==> Uploaded in 1.9s. Compression took 2.7s
+2026-04-24T01:39:50.300580362Z ==> Build successful 🎉
+2026-04-24T01:40:19.156850901Z ==> Deploying...
+2026-04-24T01:40:19.363265814Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-04-24T01:40:45.242548149Z ==> Running 'gunicorn app:app'
+2026-04-24T01:40:54.546822659Z Traceback (most recent call last):
+2026-04-24T01:40:54.546853321Z   File "/opt/render/project/src/.venv/bin/gunicorn", line 8, in <module>
+2026-04-24T01:40:54.54702555Z     sys.exit(run())
+2026-04-24T01:40:54.547125815Z              ^^^^^
+2026-04-24T01:40:54.547137696Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/wsgiapp.py", line 67, in run
+2026-04-24T01:40:54.549132042Z     WSGIApplication("%(prog)s [OPTIONS] [APP_MODULE]", prog=prog).run()
+2026-04-24T01:40:54.549235018Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/base.py", line 236, in run
+2026-04-24T01:40:54.551749572Z     super().run()
+2026-04-24T01:40:54.551795664Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/base.py", line 72, in run
+2026-04-24T01:40:54.55190341Z     Arbiter(self).run()
+2026-04-24T01:40:54.551937272Z     ^^^^^^^^^^^^^
+2026-04-24T01:40:54.551942122Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/arbiter.py", line 58, in __init__
+2026-04-24T01:40:54.554490358Z     self.setup(app)
+2026-04-24T01:40:54.554503089Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/arbiter.py", line 118, in setup
+2026-04-24T01:40:54.554508549Z     self.app.wsgi()
+2026-04-24T01:40:54.554513119Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/base.py", line 67, in wsgi
+2026-04-24T01:40:54.55451812Z     self.callable = self.load()
+2026-04-24T01:40:54.55452237Z                     ^^^^^^^^^^^
+2026-04-24T01:40:54.55452553Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/wsgiapp.py", line 58, in load
+2026-04-24T01:40:54.55452866Z     return self.load_wsgiapp()
+2026-04-24T01:40:54.55453171Z            ^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:40:54.554535101Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/wsgiapp.py", line 48, in load_wsgiapp
+2026-04-24T01:40:54.554538551Z     return util.import_app(self.app_uri)
+2026-04-24T01:40:54.554541651Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:40:54.554544801Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/util.py", line 371, in import_app
+2026-04-24T01:40:54.556674815Z     mod = importlib.import_module(module)
+2026-04-24T01:40:54.556683565Z           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:40:54.556697036Z   File "/opt/render/project/python/Python-3.12.6/lib/python3.12/importlib/__init__.py", line 90, in import_module
+2026-04-24T01:40:54.560563962Z     return _bootstrap._gcd_import(name[level:], package, level)
+2026-04-24T01:40:54.560589333Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:40:54.560599674Z   File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+2026-04-24T01:40:54.560605684Z   File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+2026-04-24T01:40:54.560630126Z   File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+2026-04-24T01:40:54.560636856Z   File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+2026-04-24T01:40:54.560640866Z   File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+2026-04-24T01:40:54.560647947Z   File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+2026-04-24T01:40:54.560654447Z   File "/opt/render/project/src/app.py", line 107, in <module>
+2026-04-24T01:40:54.561305351Z     ensure_schema_and_seed()
+2026-04-24T01:40:54.561314942Z   File "/opt/render/project/src/app.py", line 74, in ensure_schema_and_seed
+2026-04-24T01:40:54.56183559Z     conn = get_conn()
+2026-04-24T01:40:54.561849231Z            ^^^^^^^^^^
+2026-04-24T01:40:54.561852651Z   File "/opt/render/project/src/app.py", line 44, in get_conn
+2026-04-24T01:40:54.561855801Z     return psycopg2.connect(url, cursor_factory=extras.RealDictCursor)
+2026-04-24T01:40:54.561858841Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:40:54.561862061Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/psycopg2/__init__.py", line 122, in connect
+2026-04-24T01:40:54.562343617Z     conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+2026-04-24T01:40:54.562356047Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:40:54.562416821Z psycopg2.OperationalError: connection to server at "db.vqawahybaepcnfehlimn.supabase.co" (2406:da18:243:7429:9ba0:fb3:6f36:99aa), port 5432 failed: Network is unreachable
+2026-04-24T01:40:54.562421491Z 	Is the server running on that host and accepting TCP/IP connections?
+2026-04-24T01:40:54.562424351Z 
+2026-04-24T01:41:10.499639089Z ==> Exited with status 1
+2026-04-24T01:41:10.501862897Z ==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
+2026-04-24T01:41:18.000361743Z ==> Running 'gunicorn app:app'
+2026-04-24T01:41:25.718191994Z Traceback (most recent call last):
+2026-04-24T01:41:25.718213566Z   File "/opt/render/project/src/.venv/bin/gunicorn", line 8, in <module>
+2026-04-24T01:41:25.718323341Z     sys.exit(run())
+2026-04-24T01:41:25.718330702Z              ^^^^^
+2026-04-24T01:41:25.718335682Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/wsgiapp.py", line 67, in run
+2026-04-24T01:41:25.719216299Z     WSGIApplication("%(prog)s [OPTIONS] [APP_MODULE]", prog=prog).run()
+2026-04-24T01:41:25.719328735Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/base.py", line 236, in run
+2026-04-24T01:41:25.71998343Z     super().run()
+2026-04-24T01:41:25.719991381Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/base.py", line 72, in run
+2026-04-24T01:41:25.720136708Z     Arbiter(self).run()
+2026-04-24T01:41:25.720145699Z     ^^^^^^^^^^^^^
+2026-04-24T01:41:25.720149679Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/arbiter.py", line 58, in __init__
+2026-04-24T01:41:25.721017685Z     self.setup(app)
+2026-04-24T01:41:25.721033016Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/arbiter.py", line 118, in setup
+2026-04-24T01:41:25.721176714Z     self.app.wsgi()
+2026-04-24T01:41:25.721186504Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/base.py", line 67, in wsgi
+2026-04-24T01:41:25.721281039Z     self.callable = self.load()
+2026-04-24T01:41:25.721287999Z                     ^^^^^^^^^^^
+2026-04-24T01:41:25.72129301Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/wsgiapp.py", line 58, in load
+2026-04-24T01:41:25.721391495Z     return self.load_wsgiapp()
+2026-04-24T01:41:25.721399616Z            ^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:41:25.721405476Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/wsgiapp.py", line 48, in load_wsgiapp
+2026-04-24T01:41:25.721499151Z     return util.import_app(self.app_uri)
+2026-04-24T01:41:25.721511171Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:41:25.721516042Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/util.py", line 371, in import_app
+2026-04-24T01:41:25.722441441Z     mod = importlib.import_module(module)
+2026-04-24T01:41:25.722455602Z           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:41:25.722460972Z   File "/opt/render/project/python/Python-3.12.6/lib/python3.12/importlib/__init__.py", line 90, in import_module
+2026-04-24T01:41:25.722578768Z     return _bootstrap._gcd_import(name[level:], package, level)
+2026-04-24T01:41:25.722592339Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:41:25.722598Z   File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+2026-04-24T01:41:25.72260636Z   File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+2026-04-24T01:41:25.72261112Z   File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+2026-04-24T01:41:25.72261545Z   File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+2026-04-24T01:41:25.722620041Z   File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+2026-04-24T01:41:25.722628301Z   File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+2026-04-24T01:41:25.722645482Z   File "/opt/render/project/src/app.py", line 107, in <module>
+2026-04-24T01:41:25.723121637Z     ensure_schema_and_seed()
+2026-04-24T01:41:25.723133998Z   File "/opt/render/project/src/app.py", line 74, in ensure_schema_and_seed
+2026-04-24T01:41:25.723138558Z     conn = get_conn()
+2026-04-24T01:41:25.723152949Z            ^^^^^^^^^^
+2026-04-24T01:41:25.723156389Z   File "/opt/render/project/src/app.py", line 44, in get_conn
+2026-04-24T01:41:25.723159019Z     return psycopg2.connect(url, cursor_factory=extras.RealDictCursor)
+2026-04-24T01:41:25.723161799Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:41:25.72316445Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/psycopg2/__init__.py", line 122, in connect
+2026-04-24T01:41:25.797731045Z     conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+2026-04-24T01:41:25.797805199Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T01:41:25.79781218Z psycopg2.OperationalError: connection to server at "db.vqawahybaepcnfehlimn.supabase.co" (2406:da18:243:7429:9ba0:fb3:6f36:99aa), port 5432 failed: Network is unreachable
+2026-04-24T01:41:25.79781572Z 	Is the server running on that host and accepting TCP/IP connections?
+2026-04-24T01:41:25.79781864Z 
+

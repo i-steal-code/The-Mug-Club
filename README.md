@@ -35,6 +35,8 @@ Open `http://127.0.0.1:5000`.
 
 On first boot the app applies `schema.sql` and optional `seed.sql` if the database is empty.
 
+**Supabase + Render:** If logs show `connection to server at "db....supabase.co" (2406:... IPv6 ...) ... Network is unreachable`, the host had no usable IPv6 route from Render. This app resolves the hostname to **IPv4** and connects with `hostaddr` (TLS still uses the real hostname). If problems persist, use Supabase’s **connection pooler** URI (port **6543** transaction mode or session pooler) from **Project Settings → Database**, which often behaves better from cloud providers.
+
 ## Data import
 
 CSV files in the `database import/` folder are reference exports from Google Sheets. Use **Import / Export** in the app to load them (financial tracker, inventory, margins) or to export back to CSV for stakeholders and Sheets.

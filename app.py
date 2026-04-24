@@ -7,9 +7,12 @@ from __future__ import annotations
 
 import csv
 import io
+import ipaddress
 import os
 import re
+import socket
 from datetime import date, datetime
+from urllib.parse import parse_qs, unquote, urlparse
 
 import psycopg2
 from flask import Flask, Response, flash, redirect, render_template, request, url_for
@@ -32,6 +35,68 @@ PAYMENT_STATUSES = ["Unpaid", "Paid", "Refunded"]
 CLOUD_TYPES = ("coffee", "matcha")
 
 
+def _first_ipv4_addr(hostname: str, port: int) -> str | None:
+    """Return first IPv4 for hostname, or None (e.g. only AAAA on broken IPv6 paths)."""
+    try:
+        infos = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+    except OSError:
+        return None
+    for family, _, _, _, sockaddr in infos:
+        if family == socket.AF_INET:
+            return sockaddr[0]
+    return None
+
+
+def _connect_kwargs_from_database_url(url: str) -> dict:
+    """
+    Build psycopg2 keyword args from a postgresql:// URI.
+
+    Render (and some hosts) cannot reach Supabase over IPv6 even when DNS returns
+    AAAA first → "Network is unreachable". Passing hostaddr=<IPv4> with host=<FQDN>
+    forces IPv4 while keeping the correct TLS server name.
+    """
+    parsed = urlparse(url)
+    host = parsed.hostname
+    port = parsed.port or 5432
+    path = parsed.path or "/postgres"
+    dbname = path[1:] if path.startswith("/") else path
+    if not dbname:
+        dbname = "postgres"
+
+    user = unquote(parsed.username) if parsed.username else "postgres"
+    password = unquote(parsed.password) if parsed.password is not None else ""
+
+    q = parse_qs(parsed.query, keep_blank_values=True)
+    extra: dict[str, str] = {}
+    for key, values in q.items():
+        if values and values[0] is not None:
+            extra[key] = values[0]
+    if "sslmode" not in q:
+        extra["sslmode"] = "require"
+
+    base = {
+        "dbname": dbname,
+        "user": user,
+        "password": password,
+        "port": str(port),
+        **extra,
+    }
+
+    if not host:
+        return base
+
+    try:
+        ipaddress.ip_address(host)
+        return {**base, "host": host}
+    except ValueError:
+        pass
+
+    ipv4 = _first_ipv4_addr(host, port)
+    if ipv4:
+        return {**base, "host": host, "hostaddr": ipv4}
+    return {**base, "host": host}
+
+
 def get_conn() -> PgConnection:
     if not DATABASE_URL:
         raise RuntimeError(
@@ -41,7 +106,8 @@ def get_conn() -> PgConnection:
     url = DATABASE_URL
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://") :]
-    return psycopg2.connect(url, cursor_factory=extras.RealDictCursor)
+    kwargs = _connect_kwargs_from_database_url(url)
+    return psycopg2.connect(cursor_factory=extras.RealDictCursor, **kwargs)
 
 
 def query(sql: str, params=None, fetch=False, one=False):
