@@ -13,3 +13,55 @@ code rebase & refactor to host:
 7. add recipes page to create new recipes and items. every latte uses the base items, 1 coffee or matcha cloud, and 1 flavour (no flavour for original lattes).
 
 v0.1.2
+hosting troubleshooting:
+here are the error logs from the first deployment:
+2026-04-24T00:36:45.403752394Z ==> Setting WEB_CONCURRENCY=1 by default, based on available CPUs in the instance
+2026-04-24T00:36:55.168249143Z ==> Running 'gunicorn app:app'
+2026-04-24T00:37:00.457944912Z Traceback (most recent call last):
+2026-04-24T00:37:00.459244656Z   File "/opt/render/project/src/.venv/bin/gunicorn", line 7, in <module>
+2026-04-24T00:37:00.459258356Z     sys.exit(run())
+2026-04-24T00:37:00.459260827Z              ~~~^^
+2026-04-24T00:37:00.459263437Z   File "/opt/render/project/src/.venv/lib/python3.14/site-packages/gunicorn/app/wsgiapp.py", line 67, in run
+2026-04-24T00:37:00.459269307Z     WSGIApplication("%(prog)s [OPTIONS] [APP_MODULE]", prog=prog).run()
+2026-04-24T00:37:00.459271487Z     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+2026-04-24T00:37:00.459273487Z   File "/opt/render/project/src/.venv/lib/python3.14/site-packages/gunicorn/app/base.py", line 236, in run
+2026-04-24T00:37:00.459275837Z     super().run()
+2026-04-24T00:37:00.459277907Z     ~~~~~~~~~~~^^
+2026-04-24T00:37:00.459280387Z   File "/opt/render/project/src/.venv/lib/python3.14/site-packages/gunicorn/app/base.py", line 72, in run
+2026-04-24T00:37:00.459283427Z     Arbiter(self).run()
+2026-04-24T00:37:00.459286647Z     ~~~~~~~^^^^^^
+2026-04-24T00:37:00.459290057Z   File "/opt/render/project/src/.venv/lib/python3.14/site-packages/gunicorn/arbiter.py", line 58, in __init__
+2026-04-24T00:37:00.459293177Z     self.setup(app)
+2026-04-24T00:37:00.459296597Z     ~~~~~~~~~~^^^^^
+2026-04-24T00:37:00.459299708Z   File "/opt/render/project/src/.venv/lib/python3.14/site-packages/gunicorn/arbiter.py", line 118, in setup
+2026-04-24T00:37:00.459302778Z     self.app.wsgi()
+2026-04-24T00:37:00.459305958Z     ~~~~~~~~~~~~~^^
+2026-04-24T00:37:00.459308918Z   File "/opt/render/project/src/.venv/lib/python3.14/site-packages/gunicorn/app/base.py", line 67, in wsgi
+2026-04-24T00:37:00.459311348Z     self.callable = self.load()
+2026-04-24T00:37:00.459313318Z                     ~~~~~~~~~^^
+2026-04-24T00:37:00.459315608Z   File "/opt/render/project/src/.venv/lib/python3.14/site-packages/gunicorn/app/wsgiapp.py", line 58, in load
+2026-04-24T00:37:00.459318458Z     return self.load_wsgiapp()
+2026-04-24T00:37:00.459321868Z            ~~~~~~~~~~~~~~~~~^^
+2026-04-24T00:37:00.459325408Z   File "/opt/render/project/src/.venv/lib/python3.14/site-packages/gunicorn/app/wsgiapp.py", line 48, in load_wsgiapp
+2026-04-24T00:37:00.459329029Z     return util.import_app(self.app_uri)
+2026-04-24T00:37:00.459332089Z            ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+2026-04-24T00:37:00.459346079Z   File "/opt/render/project/src/.venv/lib/python3.14/site-packages/gunicorn/util.py", line 371, in import_app
+2026-04-24T00:37:00.459348479Z     mod = importlib.import_module(module)
+2026-04-24T00:37:00.459350559Z   File "/opt/render/project/python/Python-3.14.3/lib/python3.14/importlib/__init__.py", line 88, in import_module
+2026-04-24T00:37:00.459353179Z     return _bootstrap._gcd_import(name[level:], package, level)
+2026-04-24T00:37:00.459355109Z            ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T00:37:00.459357109Z   File "<frozen importlib._bootstrap>", line 1398, in _gcd_import
+2026-04-24T00:37:00.459359099Z   File "<frozen importlib._bootstrap>", line 1371, in _find_and_load
+2026-04-24T00:37:00.459361059Z   File "<frozen importlib._bootstrap>", line 1342, in _find_and_load_unlocked
+2026-04-24T00:37:00.45936887Z   File "<frozen importlib._bootstrap>", line 938, in _load_unlocked
+2026-04-24T00:37:00.45937093Z   File "<frozen importlib._bootstrap_external>", line 759, in exec_module
+2026-04-24T00:37:00.45937285Z   File "<frozen importlib._bootstrap>", line 491, in _call_with_frames_removed
+2026-04-24T00:37:00.45937479Z   File "/opt/render/project/src/app.py", line 14, in <module>
+2026-04-24T00:37:00.45938827Z     import psycopg2
+2026-04-24T00:37:00.45939044Z   File "/opt/render/project/src/.venv/lib/python3.14/site-packages/psycopg2/__init__.py", line 51, in <module>
+2026-04-24T00:37:00.45939246Z     from psycopg2._psycopg import (                     # noqa
+2026-04-24T00:37:00.45939448Z     ...<10 lines>...
+2026-04-24T00:37:00.45939672Z     )
+2026-04-24T00:37:00.45939962Z ImportError: /opt/render/project/src/.venv/lib/python3.14/site-packages/psycopg2/_psycopg.cpython-314-x86_64-linux-gnu.so: undefined symbol: _PyInterpreterState_Get
+2026-04-24T00:37:02.12616382Z ==> Exited with status 1
+2026-04-24T00:37:02.139863064Z ==> Common ways to troubleshoot your deploy: https://render.com/docs/troubleshooting-deploys
