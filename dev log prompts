@@ -360,3 +360,60 @@ File: Code
 ```
 postgresql://postgres.vqawahybaepcnfehlimn:[YOUR-PASSWORD]@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres
 ```
+
+v0.1.9
+2026-04-24T02:29:10.030304335Z   File "/opt/render/project/src/.venv/bin/gunicorn", line 8, in <module>
+2026-04-24T02:29:10.031128066Z     sys.exit(run())
+2026-04-24T02:29:10.031140437Z              ^^^^^
+2026-04-24T02:29:10.031145657Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/wsgiapp.py", line 67, in run
+2026-04-24T02:29:10.031151747Z     WSGIApplication("%(prog)s [OPTIONS] [APP_MODULE]", prog=prog).run()
+2026-04-24T02:29:10.031155647Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/base.py", line 236, in run
+2026-04-24T02:29:10.031159757Z     super().run()
+2026-04-24T02:29:10.031163917Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/base.py", line 72, in run
+2026-04-24T02:29:10.031168107Z     Arbiter(self).run()
+2026-04-24T02:29:10.031174758Z     ^^^^^^^^^^^^^
+2026-04-24T02:29:10.031178988Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/arbiter.py", line 58, in __init__
+2026-04-24T02:29:10.031183338Z     self.setup(app)
+2026-04-24T02:29:10.031187858Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/arbiter.py", line 118, in setup
+2026-04-24T02:29:10.031202938Z     self.app.wsgi()
+2026-04-24T02:29:10.03127005Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/base.py", line 67, in wsgi
+2026-04-24T02:29:10.031357772Z     self.callable = self.load()
+2026-04-24T02:29:10.031367533Z                     ^^^^^^^^^^^
+2026-04-24T02:29:10.031372493Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/wsgiapp.py", line 58, in load
+2026-04-24T02:29:10.031472746Z     return self.load_wsgiapp()
+2026-04-24T02:29:10.031491946Z            ^^^^^^^^^^^^^^^^^^^
+2026-04-24T02:29:10.031497066Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/app/wsgiapp.py", line 48, in load_wsgiapp
+2026-04-24T02:29:10.031605179Z     return util.import_app(self.app_uri)
+2026-04-24T02:29:10.03164025Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T02:29:10.031672691Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/gunicorn/util.py", line 371, in import_app
+2026-04-24T02:29:10.031884566Z     mod = importlib.import_module(module)
+2026-04-24T02:29:10.031918117Z           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T02:29:10.031950428Z   File "/opt/render/project/python/Python-3.12.6/lib/python3.12/importlib/__init__.py", line 90, in import_module
+2026-04-24T02:29:10.032120552Z     return _bootstrap._gcd_import(name[level:], package, level)
+2026-04-24T02:29:10.032198005Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T02:29:10.032204265Z   File "<frozen importlib._bootstrap>", line 1387, in _gcd_import
+2026-04-24T02:29:10.032208345Z   File "<frozen importlib._bootstrap>", line 1360, in _find_and_load
+2026-04-24T02:29:10.032221735Z   File "<frozen importlib._bootstrap>", line 1331, in _find_and_load_unlocked
+2026-04-24T02:29:10.032225705Z   File "<frozen importlib._bootstrap>", line 935, in _load_unlocked
+2026-04-24T02:29:10.032229765Z   File "<frozen importlib._bootstrap_external>", line 995, in exec_module
+2026-04-24T02:29:10.032237415Z   File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+2026-04-24T02:29:10.032241576Z   File "/opt/render/project/src/app.py", line 225, in <module>
+2026-04-24T02:29:10.03238933Z     ensure_schema_and_seed()
+2026-04-24T02:29:10.03240162Z   File "/opt/render/project/src/app.py", line 192, in ensure_schema_and_seed
+2026-04-24T02:29:10.032537463Z     conn = get_conn()
+2026-04-24T02:29:10.032560624Z            ^^^^^^^^^^
+2026-04-24T02:29:10.032564364Z   File "/opt/render/project/src/app.py", line 162, in get_conn
+2026-04-24T02:29:10.032672237Z     return psycopg2.connect(cursor_factory=extras.RealDictCursor, **kwargs)
+2026-04-24T02:29:10.032702338Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T02:29:10.032807701Z   File "/opt/render/project/src/.venv/lib/python3.12/site-packages/psycopg2/__init__.py", line 122, in connect
+2026-04-24T02:29:10.032938284Z     conn = _connect(dsn, connection_factory=connection_factory, **kwasync)
+2026-04-24T02:29:10.032980245Z            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+2026-04-24T02:29:10.032997166Z psycopg2.OperationalError: connection to server at "3.1.167.181", port 5432 failed: FATAL:  Tenant or user not found
+2026-04-24T02:29:10.033000386Z 
+2026-04-24T02:29:12.887311613Z ==> No open ports detected, continuing to scan...
+2026-04-24T02:29:13.278129785Z ==> Docs on specifying a port: https://render.com/docs/web-services#port-binding
+
+# v0.1.9: FATAL Tenant or user not found = pooler got user "postgres" only; need postgres.<project-ref>.
+# App validates pooler host + pre-connect; maps OperationalError to RuntimeError with hint.
+
+v0.1.10

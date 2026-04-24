@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import psycopg2
 from flask import Flask, Response, flash, redirect, render_template, request, url_for
-from psycopg2 import extras
+from psycopg2 import OperationalError, extras
 from psycopg2.extensions import connection as PgConnection
 
 # ---------------------------------------------------------------------------
@@ -133,6 +133,13 @@ def _connect_kwargs_from_database_url(url: str) -> dict:
     if not host:
         return base
 
+    if host and "pooler.supabase.com" in host.lower() and user == "postgres":
+        raise RuntimeError(
+            "Supabase pooler requires username postgres.<project-ref>, not only 'postgres'. "
+            "In Supabase → Database → Connection string, choose Session pooler (or Transaction) "
+            "and copy the full URI; the user looks like postgres.abcxyz (your project ref after the dot)."
+        )
+
     if _host_is_literal_ip(host):
         return {**base, "host": host}
 
@@ -159,7 +166,18 @@ def get_conn() -> PgConnection:
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://") :]
     kwargs = _connect_kwargs_from_database_url(url)
-    return psycopg2.connect(cursor_factory=extras.RealDictCursor, **kwargs)
+    try:
+        return psycopg2.connect(cursor_factory=extras.RealDictCursor, **kwargs)
+    except OperationalError as e:
+        err = str(e).lower()
+        if "tenant or user not found" in err:
+            raise RuntimeError(
+                "Database rejected the login: 'Tenant or user not found' (Supabase pooler). "
+                "Use username postgres.<your-project-ref> from the Session (or Transaction) pooler "
+                "connection string— not the direct-DB user 'postgres' alone. Confirm the password "
+                "is the database password and the URI was copied from Database → Connection string."
+            ) from e
+        raise
 
 
 def query(sql: str, params=None, fetch=False, one=False):

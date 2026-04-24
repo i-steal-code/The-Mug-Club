@@ -2,7 +2,7 @@
 
 Operations dashboard for inventory, orders, finance, tasks, and recipes.
 
-**Status: v0.1.8 (development).**
+**Status: v0.1.9 (development).**
 
 ## Stack
 
@@ -36,6 +36,8 @@ Open `http://127.0.0.1:5000`.
 On first boot the app applies `schema.sql` and optional `seed.sql` if the database is empty.
 
 **Supabase + Render:** Supabase’s **Session pooler** (under **Database → Connection string**) is **IPv4-proxied** and uses a host like `aws-REGION.pooler.supabase.com`, port **5432**, and user **`postgres.<project-ref>`** — use that URI for **`DATABASE_URL`** on Render when the direct `db.<ref>.supabase.co` host fails with IPv6 “Network is unreachable”. **Transaction** mode pooler (port **6543**) is another option. This app also resolves **IPv4 + `hostaddr`** for direct connections when an A record exists.
+
+If Postgres returns **`FATAL: Tenant or user not found`**, the pooler username is wrong: it must be **`postgres.<project-ref>`**, not plain `postgres`. Copy the pooler URI from Supabase without swapping in the direct-connection user.
 
 ## Data import
 
