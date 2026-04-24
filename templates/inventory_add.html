@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Add inventory · Mug Club{% endblock %}
+{% block content %}
+<h1>Add inventory line</h1>
+
+<form method="post" class="form-card">
+  <label>Item name <span class="req">*</span>
+    <input type="text" name="name" required maxlength="120" placeholder="e.g. cup, milk, naoki matcha">
+  </label>
+
+  <div class="row">
+    <label>Quantity (number)
+      <input type="number" step="any" name="qty_grams" min="0" value="0"
+             placeholder="grams, pieces, or your unit">
+    </label>
+    <label class="row" style="flex-direction:row; align-items:center; gap:8px;">
+      <input type="checkbox" name="updated_flag" id="upd">
+      <span>Marked as updated</span>
+    </label>
+  </div>
+
+  <label>Remark
+    <input type="text" name="remark" maxlength="500" placeholder="Optional note">
+  </label>
+
+  <div class="form-actions">
+    <button class="btn primary" type="submit">Save</button>
+    <a class="btn ghost" href="{{ url_for('inventory_list') }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

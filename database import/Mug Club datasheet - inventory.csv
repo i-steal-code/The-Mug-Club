@@ -1,0 +1,29 @@
+item,qty/g,remark,updated?
+cup,77,,FALSE
+lid,70,,FALSE
+straw,100,I CANT COUNT,FALSE
+ICE,20000,2 bags in freezer (partially full),TRUE
+milk,4000,,TRUE
+whipping cream,400,,TRUE
+naoki matcha,180,,FALSE
+coffee capsule,24,in pieces,TRUE
+brown sugar,350,,FALSE
+strawberry puree,1067,,FALSE
+raw honey,390,,TRUE
+butter (salted),0,,TRUE
+honey buttercream,560,,FALSE
+coca powder,200,,TRUE
+vanilla extract,28,,FALSE
+mocha veloute,200,,TRUE
+cream cheese,0,,TRUE
+eggs,0,using eggs from home,TRUE
+ladyfinger biscuit,22,by pcs,TRUE
+,,,
+component,qty to prep for current week,ready?,
+base,50,FALSE,
+matcha,30,TRUE,
+coffee,30,TRUE,
+strawberry,20,TRUE,
+honey buttercream,20,TRUE,
+mocha,6,TRUE,
+ice chocolate,10,TRUE,

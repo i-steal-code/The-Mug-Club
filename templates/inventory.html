@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Inventory · Mug Club{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Inventory</h1>
+  <a class="btn primary" href="{{ url_for('inventory_add') }}">+ Add line</a>
+</div>
+
+<p class="subtitle">Stock from the inventory datasheet (quantities may be grams, pieces, or other units per row).</p>
+
+<h2>Raw materials &amp; supplies</h2>
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Item</th>
+      <th>Qty</th>
+      <th>Remark</th>
+      <th>Updated?</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for p in items %}
+    {% set q = p.qty_grams %}
+    <tr>
+      <td><strong>{{ p.item_name }}</strong></td>
+      <td>{% if q is not none %}{{ q }}{% else %}—{% endif %}</td>
+      <td class="desc">{{ p.remark or '—' }}</td>
+      <td>{{ 'Yes' if p.updated_flag else 'No' }}</td>
+      <td>
+        {% if q is not none and q == 0 %}
+          <span class="pill danger">Out</span>
+        {% elif q is not none and q < 20 and ('cup' in p.item_name|lower or 'lid' in p.item_name|lower or 'straw' in p.item_name|lower) %}
+          <span class="pill warning">Low</span>
+        {% else %}
+          <span class="pill ok">OK</span>
+        {% endif %}
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5">No inventory rows yet. Import CSV from <a href="{{ url_for('data_import_export') }}">Import / Export</a> or add manually.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Prep components (current week)</h2>
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Component</th>
+      <th>Qty to prep</th>
+      <th>Ready?</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in prep %}
+    <tr>
+      <td><strong>{{ r.component_name }}</strong></td>
+      <td>{{ r.qty_for_week or '—' }}</td>
+      <td>{{ 'Yes' if r.ready else 'No' }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="3">No prep rows yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}Add order · Mug Club{% endblock %}
+{% block content %}
+<h1>Add order</h1>
+
+<form method="post" class="form-card">
+  <label>Customer name <span class="req">*</span>
+    <input type="text" name="customer_name" required maxlength="120">
+  </label>
+
+  <label>Order summary (drinks / notes)
+    <textarea name="order_summary" rows="3" placeholder="e.g. 2 strawberry matcha lattes, 1 honey matcha"></textarea>
+  </label>
+
+  <div class="row">
+    <label>Cup count
+      <input type="number" name="cup_count" min="1" value="1">
+    </label>
+    <label>Total amount ($)
+      <input type="text" name="total_amount" placeholder="e.g. 8.00">
+    </label>
+    <label>Order date
+      <input type="text" name="order_date" placeholder="DD/MM/YYYY or YYYY-MM-DD">
+    </label>
+  </div>
+
+  <label>Payment notes
+    <input type="text" name="payment_notes" maxlength="500" placeholder="PayLah, PayNow, etc.">
+  </label>
+
+  <div class="row">
+    <label>Order status
+      <select name="order_status">
+        {% for s in order_statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Payment status
+      <select name="payment_status">
+        {% for s in payment_statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <div class="form-actions">
+    <button class="btn primary" type="submit">Add order</button>
+    <a class="btn ghost" href="{{ url_for('orders_list') }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

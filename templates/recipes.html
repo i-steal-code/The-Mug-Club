@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Recipes · Mug Club{% endblock %}
+{% block content %}
+<h1>Recipes &amp; drink items</h1>
+<p class="subtitle">
+  Every <strong>latte</strong> uses shared base ingredients, exactly one <strong>coffee</strong> or <strong>matcha</strong> cloud,
+  and at most one <strong>flavour</strong>. <strong>Original</strong> matcha lattes have no flavour (leave flavour blank).
+  Ingredient amounts per recipe can be added later on this page in a future iteration.
+</p>
+
+<div class="page-header">
+  <h2>Existing recipes</h2>
+</div>
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Category</th>
+      <th>Latte?</th>
+      <th>Cloud</th>
+      <th>Flavour</th>
+      <th>Notes</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in recipes %}
+    <tr>
+      <td><strong>{{ r.name }}</strong></td>
+      <td>{{ r.drink_category or '—' }}</td>
+      <td>{{ 'Yes' if r.is_latte else 'No' }}</td>
+      <td>{{ r.cloud_type or '—' }}</td>
+      <td>{{ r.flavour_name or '—' }}</td>
+      <td class="desc">{{ r.notes or '—' }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6">No recipes yet. Add one below.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Add recipe</h2>
+<form method="post" class="form-card">
+  <label>Name <span class="req">*</span>
+    <input type="text" name="name" required maxlength="120" placeholder="e.g. Strawberry matcha latte">
+  </label>
+
+  <div class="row">
+    <label>Drink category
+      <input type="text" name="drink_category" placeholder="matcha, coffee, special, …">
+    </label>
+    <label style="flex-direction:row; align-items:center; gap:8px; min-width:auto;">
+      <input type="checkbox" name="is_latte" id="is_latte">
+      <span>This is a latte (requires coffee or matcha cloud)</span>
+    </label>
+  </div>
+
+  <div class="row">
+    <label>Cloud (latte only)
+      <select name="cloud_type">
+        <option value="">—</option>
+        <option value="coffee">Coffee cloud</option>
+        <option value="matcha">Matcha cloud</option>
+      </select>
+    </label>
+    <label>Flavour (optional; blank = original)
+      <input type="text" name="flavour_name" maxlength="80" placeholder="strawberry, honey buttercream, …">
+    </label>
+  </div>
+
+  <label>Notes
+    <textarea name="notes" rows="2" placeholder="Optional"></textarea>
+  </label>
+
+  <div class="form-actions">
+    <button class="btn primary" type="submit">Save recipe</button>
+  </div>
+</form>
+{% endblock %}

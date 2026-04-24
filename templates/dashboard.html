@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Mug Club{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+<p class="subtitle">Overview of tasks, stock lines, and orders.</p>
+
+<section class="stats">
+  <div class="stat-card">
+    <h3>Tasks</h3>
+    <p class="big">{{ stats.tasks_total }}</p>
+    <small>{{ stats.tasks_open }} still open</small>
+  </div>
+  <div class="stat-card">
+    <h3>Inventory lines</h3>
+    <p class="big">{{ stats.inventory_lines }}</p>
+    <small>Raw materials &amp; supplies</small>
+  </div>
+  <div class="stat-card">
+    <h3>Orders</h3>
+    <p class="big">{{ stats.orders_total }}</p>
+    <small>{{ stats.orders_pending }} pending</small>
+  </div>
+</section>
+
+<section>
+  <div class="page-header">
+    <h2>Recent tasks</h2>
+    <a class="btn primary" href="{{ url_for('tasks_add') }}">+ Add task</a>
+  </div>
+  {% if recent_tasks %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Title</th>
+        <th>Assigned</th>
+        <th>Created by</th>
+        <th>Priority</th>
+        <th>Status</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for t in recent_tasks %}
+      <tr>
+        <td>{{ t.title }}</td>
+        <td>{{ t.assigned_name or '—' }}</td>
+        <td>{{ t.created_name or '—' }}</td>
+        <td><span class="pill p-{{ t.priority|lower }}">{{ t.priority }}</span></td>
+        <td><span class="pill s-{{ t.status|replace(' ','-')|lower }}">{{ t.status }}</span></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p>No tasks yet. <a href="{{ url_for('tasks_add') }}">Add your first task</a>.</p>
+  {% endif %}
+</section>
+{% endblock %}

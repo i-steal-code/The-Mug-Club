@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Mug Club{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Mug Club</div>
+    <nav class="nav">
+      <a href="{{ url_for('dashboard') }}">Dashboard</a>
+      <a href="{{ url_for('tasks_list') }}">Tasks</a>
+      <a href="{{ url_for('inventory_list') }}">Inventory</a>
+      <a href="{{ url_for('orders_list') }}">Orders</a>
+      <a href="{{ url_for('finance_summary') }}">Finance</a>
+      <a href="{{ url_for('recipes_page') }}">Recipes</a>
+      <a href="{{ url_for('members_page') }}">Members</a>
+      <a href="{{ url_for('data_import_export') }}">Import / Export</a>
+    </nav>
+  </header>
+
+  <main class="container">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        <div class="flashes">
+          {% for category, msg in messages %}
+            <div class="flash {{ category }}">{{ msg }}</div>
+          {% endfor %}
+        </div>
+      {% endif %}
+    {% endwith %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <small>The Mug Club · Operations dashboard · v0.1 (development)</small>
+  </footer>
+</body>
+</html>

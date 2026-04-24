@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}Finance · Mug Club{% endblock %}
+{% block content %}
+<h1>Finance &amp; margins</h1>
+<p class="subtitle">Cash inflows and outflows from the financial tracker, plus margin datasheet views. Export CSV for stakeholders or Google Sheets sync.</p>
+
+<div class="stats">
+  <div class="summary-card">
+    <h3>Total cash inflow</h3>
+    <p class="big">${{ '%.2f' % total_revenue }}</p>
+  </div>
+  <div class="summary-card">
+    <h3>Total cash outflow</h3>
+    <p class="big">${{ '%.2f' % total_expenses }}</p>
+  </div>
+  <div class="summary-card">
+    <h3>Net (in − out)</h3>
+    <p class="big">${{ '%.2f' % net }}</p>
+  </div>
+</div>
+
+<h2>Cash inflows</h2>
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Amount</th>
+      <th>Description</th>
+      <th>Cups</th>
+      <th>Date</th>
+      <th>Person</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in inflows %}
+    <tr>
+      <td>{{ r.source_txn_number or '—' }}</td>
+      <td>{% if r.amount is not none %}${{ '%.2f' % r.amount }}{% else %}—{% endif %}</td>
+      <td class="desc">{{ r.description or '—' }}</td>
+      <td>{{ r.quantity_cups or '—' }}</td>
+      <td>{{ r.txn_date or '—' }}</td>
+      <td class="desc">{{ r.person_in_charge or '—' }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6">No inflow rows. Import the financial tracker CSV.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Cash outflows</h2>
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Amount</th>
+      <th>Description</th>
+      <th>Date</th>
+      <th>Person</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in outflows %}
+    <tr>
+      <td>{{ r.source_txn_number or '—' }}</td>
+      <td>{% if r.amount is not none %}${{ '%.2f' % r.amount }}{% else %}—{% endif %}</td>
+      <td class="desc">{{ r.description or '—' }}</td>
+      <td>{{ r.txn_date or '—' }}</td>
+      <td class="desc">{{ r.person_in_charge or '—' }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5">No outflow rows.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Menu margins (from datasheet)</h2>
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Category</th>
+      <th>Item</th>
+      <th>Cost ($)</th>
+      <th>Sell ($)</th>
+      <th>Profit ($)</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in margin_menu %}
+    <tr>
+      <td>{{ r.category or '—' }}</td>
+      <td><strong>{{ r.item_name }}</strong></td>
+      <td>{% if r.cost is not none %}{{ '%.4f' % r.cost }}{% else %}—{% endif %}</td>
+      <td>{% if r.selling_price is not none %}{{ '%.2f' % r.selling_price }}{% else %}—{% endif %}</td>
+      <td>{% if r.profit is not none %}{{ '%.4f' % r.profit }}{% else %}—{% endif %}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5">No margin menu rows. Import margins CSV.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Ingredient costs (from datasheet)</h2>
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Category</th>
+      <th>Ingredient</th>
+      <th>Cost / cup</th>
+      <th>Amt used (g)</th>
+      <th>Supplier</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in margin_ing %}
+    <tr>
+      <td>{{ r.category or '—' }}</td>
+      <td><strong>{{ r.ingredient }}</strong></td>
+      <td>{% if r.cost_per_cup is not none %}{{ '%.4f' % r.cost_per_cup }}{% else %}—{% endif %}</td>
+      <td>{% if r.amt_used_g is not none %}{{ r.amt_used_g }}{% else %}—{% endif %}</td>
+      <td class="desc">{{ r.supplier or '—' }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5">No ingredient margin rows.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

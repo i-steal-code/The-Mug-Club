@@ -1,0 +1,15 @@
+Developer logs/cursor prompts
+this text file is for the purpose of storing cursor prompts and also doubles as a dev log 
+
+v0.1.1
+based on the contents of the current repository,
+code rebase & refactor to host:
+1. remove shop-dashboard folder and shop-dashboard 2 folder in favour of organising everything properly in the repo file
+2. re-work the tech stack and framework to be hosted on render web app and database hosted on supabase
+3. update readme to be slightly simplified and also state current v0.1 development 
+4. change UI colour scheme to have primary colour (background colour) as white #eeede9, secondary colour as green #415b42, and a border/constrasting colour as black-green using the green provided as a root colour
+5. add a feature to allow import and export of .csv files to port over into the database
+6. rework database based on .csv files and also insert new data to sync. all data are migrated from google sheets, with 1 actively linked to a google form to receive orders, another financial tracker that needs to be accessible to stakeholders (will require exporting data from web app database into the google sheet), and a margins and inventory sheet. leave the members feature untouched, and rework the orders, finance and inventory to fit the data provided. recipes with ingredient amounts will be input and created later in the recipe page. csv files are in the database import folder, leave the folder untouched for database import/export (financial tracking sheet)
+7. add recipes page to create new recipes and items. every latte uses the base items, 1 coffee or matcha cloud, and 1 flavour (no flavour for original lattes).
+
+v0.1.2
