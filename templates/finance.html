@@ -2,7 +2,14 @@
 {% block title %}Finance · Mug Club{% endblock %}
 {% block content %}
 <h1>Finance &amp; margins</h1>
-<p class="subtitle">Cash inflows and outflows from the financial tracker, plus margin datasheet views. Export CSV for stakeholders or Google Sheets sync.</p>
+<p class="subtitle">Cash inflows and outflows from the financial tracker, plus margin datasheet views. Link inflows to <a href="{{ url_for('orders_list') }}">orders</a> for reconciliation.</p>
+
+<div class="header-actions" style="margin: 16px 0 24px;">
+  <a class="btn ghost" href="{{ url_for('export_table', name='finance_inflows') }}">Export inflows CSV</a>
+  <a class="btn ghost" href="{{ url_for('export_table', name='finance_outflows') }}">Export outflows CSV</a>
+  <a class="btn ghost" href="{{ url_for('export_table', name='margin_menu_items') }}">Export menu margins CSV</a>
+  <a class="btn ghost" href="{{ url_for('export_table', name='margin_ingredients') }}">Export ingredient margins CSV</a>
+</div>
 
 <div class="stats">
   <div class="summary-card">
@@ -28,6 +35,7 @@
       <th>Description</th>
       <th>Cups</th>
       <th>Date</th>
+      <th>Linked order</th>
       <th>Person</th>
     </tr>
   </thead>
@@ -39,10 +47,21 @@
       <td class="desc">{{ r.description or '—' }}</td>
       <td>{{ r.quantity_cups or '—' }}</td>
       <td>{{ r.txn_date or '—' }}</td>
+      <td>
+        <form method="post" action="{{ url_for('finance_inflow_link', inflow_id=r.id) }}" class="inline">
+          <select name="order_id" onchange="this.form.submit()" style="max-width: 220px;">
+            <option value="">— none —</option>
+            {% for o in recent_orders %}
+              <option value="{{ o.id }}" {% if r.linked_order_id == o.id %}selected{% endif %}>#{{ o.id }} {{ o.customer_name }}</option>
+            {% endfor %}
+          </select>
+        </form>
+        {% if r.linked_customer_name %}<div class="subtitle" style="margin-top:4px;">{{ r.linked_customer_name }}</div>{% endif %}
+      </td>
       <td class="desc">{{ r.person_in_charge or '—' }}</td>
     </tr>
   {% else %}
-    <tr><td colspan="6">No inflow rows. Import the financial tracker CSV.</td></tr>
+    <tr><td colspan="7">No inflow rows. Run <code>import_initial_data.py</code> or add rows in Supabase.</td></tr>
   {% endfor %}
   </tbody>
 </table>

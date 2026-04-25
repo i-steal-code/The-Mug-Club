@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Members · Mug Club{% endblock %}
 {% block content %}
-<h1>Staff / team members</h1>
+<div class="page-header">
+  <h1>Staff / team members</h1>
+  <a class="btn ghost" href="{{ url_for('export_table', name='members') }}">Export CSV</a>
+</div>
 <p class="subtitle">Staff who can be assigned tasks.</p>
 
 <form method="post" class="form-card">

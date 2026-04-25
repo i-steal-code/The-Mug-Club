@@ -1,6 +1,7 @@
 """
 The Mug Club — operations dashboard (Flask + PostgreSQL / Supabase).
 Deploy: Render Web Service + Supabase Postgres (DATABASE_URL).
+v0.2.0 — lazy schema bootstrap, /healthz keep-alive, recipes with steps & scaling, analytics, customer shop (beta).
 """
 
 from __future__ import annotations
@@ -11,11 +12,12 @@ import ipaddress
 import os
 import re
 import socket
+import threading
 from datetime import date, datetime
 from urllib.parse import parse_qs, unquote, urlparse
 
 import psycopg2
-from flask import Flask, Response, flash, redirect, render_template, request, url_for
+from flask import Flask, Response, abort, flash, redirect, render_template, request, url_for
 from psycopg2 import OperationalError, extras
 from psycopg2.extensions import connection as PgConnection
 
@@ -33,6 +35,12 @@ TASK_PRIORITIES = ["Low", "Medium", "High"]
 ORDER_STATUSES = ["Pending", "Processing", "Completed", "Cancelled"]
 PAYMENT_STATUSES = ["Unpaid", "Paid", "Refunded"]
 CLOUD_TYPES = ("coffee", "matcha")
+# Customer-facing payment choice (stored on orders.payment_method)
+CUSTOMER_PAYMENT_METHODS = (
+    ("paynow_qr", "PayNow (scan QR)"),
+    ("paynow_mobile", "PayNow (mobile number)"),
+    ("cash_collection", "Cash / in person at collection"),
+)
 
 
 def _host_is_literal_ip(host: str) -> bool:
@@ -156,7 +164,8 @@ def _connect_kwargs_from_database_url(url: str) -> dict:
     )
 
 
-def get_conn() -> PgConnection:
+def _connect() -> PgConnection:
+    """Open a new DB connection (no schema bootstrap — used internally)."""
     if not DATABASE_URL:
         raise RuntimeError(
             "DATABASE_URL is not set. Add your Supabase connection string "
@@ -178,6 +187,15 @@ def get_conn() -> PgConnection:
                 "is the database password and the URI was copied from Database → Connection string."
             ) from e
         raise
+
+
+_schema_lock = threading.Lock()
+_schema_ready = False
+
+
+def get_conn() -> PgConnection:
+    _ensure_schema_applied()
+    return _connect()
 
 
 def query(sql: str, params=None, fetch=False, one=False):
@@ -206,8 +224,48 @@ def _run_schema(conn: PgConnection) -> None:
             cur.execute(stmt)
 
 
-def ensure_schema_and_seed() -> None:
-    conn = get_conn()
+_SCHEMA_MIGRATION_DDL = [
+    """
+    ALTER TABLE recipes ADD COLUMN IF NOT EXISTS base_yield_cups
+      DOUBLE PRECISION NOT NULL DEFAULT 1
+    """,
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method TEXT",
+    "ALTER TABLE finance_cash_inflows ADD COLUMN IF NOT EXISTS linked_order_id INTEGER",
+    """
+    DO $$ BEGIN
+      ALTER TABLE finance_cash_inflows
+        ADD CONSTRAINT finance_cash_inflows_linked_order_id_fkey
+        FOREIGN KEY (linked_order_id) REFERENCES orders(id) ON DELETE SET NULL;
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS recipe_steps (
+        id SERIAL PRIMARY KEY,
+        recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+        step_order INTEGER NOT NULL DEFAULT 0,
+        body TEXT NOT NULL,
+        completed BOOLEAN NOT NULL DEFAULT FALSE
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_recipe_steps_recipe ON recipe_steps(recipe_id)",
+    """
+    CREATE TABLE IF NOT EXISTS recipe_ingredients (
+        id SERIAL PRIMARY KEY,
+        recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        label TEXT NOT NULL,
+        qty_per_yield DOUBLE PRECISION,
+        unit TEXT NOT NULL DEFAULT 'g',
+        inventory_item_name TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id)",
+]
+
+
+def ensure_schema_only() -> None:
+    conn = _connect()
     try:
         with conn:
             with conn.cursor() as cur:
@@ -220,34 +278,44 @@ def ensure_schema_and_seed() -> None:
                 exists = cur.fetchone() is not None
             if not exists:
                 _run_schema(conn)
-        with conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT COUNT(*) AS c FROM members")
-                n = cur.fetchone()["c"]
-            if n == 0:
-                seed_path = os.path.join(BASE_DIR, "seed.sql")
-                if os.path.isfile(seed_path):
-                    with open(seed_path, encoding="utf-8") as f:
-                        seed_sql = f.read()
-                    with conn.cursor() as cur:
-                        for stmt in re.split(r";\s*\n", seed_sql):
-                            stmt = stmt.strip()
-                            if stmt:
-                                cur.execute(stmt)
+                for stmt in _SCHEMA_MIGRATION_DDL:
+                    stmt = stmt.strip()
+                    if stmt:
+                        cur.execute(stmt)
     finally:
         conn.close()
 
 
-with app.app_context():
-    if DATABASE_URL:
-        ensure_schema_and_seed()
+def _ensure_schema_applied() -> None:
+    global _schema_ready
+    if _schema_ready or not DATABASE_URL:
+        return
+    with _schema_lock:
+        if _schema_ready or not DATABASE_URL:
+            return
+        ensure_schema_only()
+        _schema_ready = True
 
 
 @app.before_request
 def _require_database_url():
-    if DATABASE_URL or request.endpoint == "static":
+    if DATABASE_URL or request.endpoint in ("static", "healthz"):
         return None
     return render_template("setup.html"), 503
+
+
+@app.get("/healthz")
+def healthz():
+    """
+    Lightweight liveness probe for external keep-alive monitors (e.g. UptimeRobot).
+    Does not open a database connection — wakes the web process only.
+    """
+    return Response(
+        "ok\n",
+        mimetype="text/plain",
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -581,7 +649,8 @@ def import_orders_csv(stream, replace: bool = False) -> int:
             ost = "Pending"
         if pst not in PAYMENT_STATUSES:
             pst = "Unpaid"
-        rows_out.append((cust, summary, cups, total, odate, notes, ost, pst))
+        pm = (col(row, "payment_method") or "").strip() or None
+        rows_out.append((cust, summary, cups, total, odate, notes, pm, ost, pst))
 
     conn = get_conn()
     try:
@@ -593,8 +662,8 @@ def import_orders_csv(stream, replace: bool = False) -> int:
                     cur.execute(
                         """
                         INSERT INTO orders
-                          (customer_name, order_summary, cup_count, total_amount, order_date, payment_notes, order_status, payment_status)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                          (customer_name, order_summary, cup_count, total_amount, order_date, payment_notes, payment_method, order_status, payment_status)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         """,
                         t,
                     )
@@ -797,6 +866,7 @@ def orders_add():
         total = parse_money(request.form.get("total_amount"))
         odate = parse_date(request.form.get("order_date")) or date.today()
         notes = request.form.get("payment_notes", "").strip() or None
+        payment_method = (request.form.get("payment_method") or "").strip() or None
         order_status = request.form.get("order_status", "Pending")
         payment_status = request.form.get("payment_status", "Unpaid")
         if not customer:
@@ -807,10 +877,10 @@ def orders_add():
             query(
                 """
                 INSERT INTO orders
-                  (customer_name, order_summary, cup_count, total_amount, order_date, payment_notes, order_status, payment_status)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                  (customer_name, order_summary, cup_count, total_amount, order_date, payment_notes, payment_method, order_status, payment_status)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """,
-                (customer, summary, cups, total, odate, notes, order_status, payment_status),
+                (customer, summary, cups, total, odate, notes, payment_method, order_status, payment_status),
             )
             flash("Order added.", "success")
             return redirect(url_for("orders_list"))
@@ -850,7 +920,12 @@ def finance_summary():
         fetch=True,
     )
     inflows = query(
-        "SELECT * FROM finance_cash_inflows ORDER BY txn_date NULLS LAST, id",
+        """
+        SELECT i.*, o.customer_name AS linked_customer_name
+        FROM finance_cash_inflows i
+        LEFT JOIN orders o ON o.id = i.linked_order_id
+        ORDER BY i.txn_date NULLS LAST, i.id
+        """,
         fetch=True,
     )
     outflows = query(
@@ -867,6 +942,15 @@ def finance_summary():
         fetch=True,
         one=True,
     )["s"]
+    recent_orders = query(
+        """
+        SELECT id, customer_name, order_date, order_summary
+        FROM orders
+        ORDER BY COALESCE(order_date, created_at::date) DESC, id DESC
+        LIMIT 200
+        """,
+        fetch=True,
+    )
     return render_template(
         "finance.html",
         margin_menu=margin_menu or [],
@@ -876,6 +960,7 @@ def finance_summary():
         total_revenue=float(rev or 0),
         total_expenses=float(exp or 0),
         net=float((rev or 0) - (exp or 0)),
+        recent_orders=recent_orders or [],
     )
 
 
@@ -924,12 +1009,18 @@ def recipes_page():
         else:
             cloud_type = None
         try:
+            by = float(request.form.get("base_yield_cups") or 1)
+        except ValueError:
+            by = 1.0
+        if by <= 0:
+            by = 1.0
+        try:
             query(
                 """
-                INSERT INTO recipes (name, drink_category, is_latte, cloud_type, flavour_name, notes)
-                VALUES (%s,%s,%s,%s,%s,%s)
+                INSERT INTO recipes (name, drink_category, is_latte, cloud_type, flavour_name, notes, base_yield_cups)
+                VALUES (%s,%s,%s,%s,%s,%s,%s)
                 """,
-                (name, drink_category, is_latte, cloud_type, flavour_name, notes),
+                (name, drink_category, is_latte, cloud_type, flavour_name, notes, by),
             )
             flash("Recipe added.", "success")
         except Exception as exc:  # noqa: BLE001
@@ -944,37 +1035,253 @@ def recipes_page():
     )
 
 
-# ---------------------------------------------------------------------------
-# Import / export
-# ---------------------------------------------------------------------------
-@app.route("/data", methods=["GET", "POST"])
-def data_import_export():
+def _recipe_scale_factor(recipe: dict, desired: float | None) -> float:
+    base = float(recipe.get("base_yield_cups") or 1)
+    if base <= 0:
+        base = 1.0
+    d = float(desired) if desired is not None else base
+    if d <= 0:
+        d = base
+    return d / base
+
+
+@app.route("/recipes/<int:recipe_id>", methods=["GET", "POST"])
+def recipe_detail(recipe_id):
+    recipe = query("SELECT * FROM recipes WHERE id = %s", (recipe_id,), fetch=True, one=True)
+    if not recipe:
+        abort(404)
+    dc_raw = (request.values.get("desired_cups") or "").strip()
+    back_q = {"desired_cups": dc_raw} if dc_raw else {}
+
     if request.method == "POST":
-        kind = request.form.get("import_kind", "")
-        replace = request.form.get("replace_existing") == "on"
-        f = request.files.get("file")
-        if not f or not f.filename:
-            flash("Choose a CSV file to upload.", "error")
-            return redirect(url_for("data_import_export"))
-        try:
-            if kind == "inventory":
-                n1, n2 = import_inventory_csv(f.stream, replace=replace)
-                flash(f"Inventory: {n1} items, {n2} prep rows imported.", "success")
-            elif kind == "margins":
-                a, b = import_margins_csv(f.stream, replace=replace)
-                flash(f"Margins: {a} ingredients, {b} menu lines imported.", "success")
-            elif kind == "finance":
-                a, b = import_financial_csv(f.stream, replace=replace)
-                flash(f"Finance: {a} inflows, {b} outflows imported.", "success")
-            elif kind == "orders":
-                n = import_orders_csv(f.stream, replace=replace)
-                flash(f"Orders: {n} rows imported.", "success")
-            else:
-                flash("Unknown import type.", "error")
-        except Exception as exc:  # noqa: BLE001
-            flash(f"Import failed: {exc}", "error")
-        return redirect(url_for("data_import_export"))
-    return render_template("import_export.html")
+        action = request.form.get("action")
+        if action == "add_step":
+            body = request.form.get("body", "").strip()
+            if body:
+                so = request.form.get("step_order", type=int)
+                if so is None:
+                    r = query(
+                        "SELECT COALESCE(MAX(step_order), -1) + 1 AS n FROM recipe_steps WHERE recipe_id = %s",
+                        (recipe_id,),
+                        fetch=True,
+                        one=True,
+                    )
+                    so = r["n"]
+                query(
+                    "INSERT INTO recipe_steps (recipe_id, step_order, body) VALUES (%s, %s, %s)",
+                    (recipe_id, so, body),
+                )
+                flash("Step added.", "success")
+        elif action == "add_ingredient":
+            label = request.form.get("label", "").strip()
+            if label:
+                qraw = (request.form.get("qty_per_yield") or "").strip()
+                try:
+                    qty = float(qraw) if qraw else None
+                except ValueError:
+                    qty = None
+                unit = (request.form.get("unit") or "g").strip() or "g"
+                invn = (request.form.get("inventory_item_name") or "").strip() or None
+                so = request.form.get("sort_order", type=int)
+                if so is None:
+                    r = query(
+                        "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM recipe_ingredients WHERE recipe_id = %s",
+                        (recipe_id,),
+                        fetch=True,
+                        one=True,
+                    )
+                    so = r["n"]
+                query(
+                    """
+                    INSERT INTO recipe_ingredients (recipe_id, sort_order, label, qty_per_yield, unit, inventory_item_name)
+                    VALUES (%s,%s,%s,%s,%s,%s)
+                    """,
+                    (recipe_id, so, label, qty, unit, invn),
+                )
+                flash("Ingredient line added.", "success")
+        elif action == "set_yield":
+            try:
+                by = float(request.form.get("base_yield_cups") or 1)
+            except ValueError:
+                by = 1.0
+            if by <= 0:
+                by = 1.0
+            query("UPDATE recipes SET base_yield_cups = %s WHERE id = %s", (by, recipe_id))
+            flash("Base yield updated.", "success")
+        return redirect(url_for("recipe_detail", recipe_id=recipe_id, **back_q))
+
+    desired = request.values.get("desired_cups", type=float)
+    factor = _recipe_scale_factor(recipe, desired)
+
+    steps = query(
+        "SELECT * FROM recipe_steps WHERE recipe_id = %s ORDER BY step_order, id",
+        (recipe_id,),
+        fetch=True,
+    )
+    ingredients = query(
+        "SELECT * FROM recipe_ingredients WHERE recipe_id = %s ORDER BY sort_order, id",
+        (recipe_id,),
+        fetch=True,
+    )
+    enriched = []
+    for ing in ingredients or []:
+        row = dict(ing)
+        qpy = ing.get("qty_per_yield")
+        row["scaled_qty"] = (float(qpy) * factor) if qpy is not None else None
+        invn = (ing.get("inventory_item_name") or "").strip()
+        stock = None
+        if invn:
+            stock = query(
+                "SELECT qty_grams, item_name FROM inventory_items WHERE lower(trim(item_name)) = lower(trim(%s)) LIMIT 1",
+                (invn,),
+                fetch=True,
+                one=True,
+            )
+        row["stock_qty_g"] = stock["qty_grams"] if stock else None
+        row["stock_item_name"] = stock["item_name"] if stock else None
+        row["stock_ok"] = bool(
+            stock
+            and stock.get("qty_grams") is not None
+            and row["scaled_qty"] is not None
+            and float(stock["qty_grams"]) >= float(row["scaled_qty"])
+        )
+        enriched.append(row)
+
+    return render_template(
+        "recipe_detail.html",
+        recipe=recipe,
+        steps=steps or [],
+        ingredients=enriched,
+        factor=factor,
+        desired_output=float(desired) if desired is not None else float(recipe.get("base_yield_cups") or 1),
+        preserve_desired_cups=dc_raw,
+    )
+
+
+@app.post("/recipes/<int:recipe_id>/steps/<int:step_id>/toggle")
+def recipe_step_toggle(recipe_id, step_id):
+    query(
+        "UPDATE recipe_steps SET completed = NOT completed WHERE id = %s AND recipe_id = %s",
+        (step_id, recipe_id),
+    )
+    flash("Step updated.", "success")
+    q = {}
+    if request.form.get("desired_cups"):
+        q["desired_cups"] = request.form.get("desired_cups")
+    return redirect(url_for("recipe_detail", recipe_id=recipe_id, **q))
+
+
+@app.get("/shop")
+def shop_order_form():
+    return render_template("shop.html", payment_methods=CUSTOMER_PAYMENT_METHODS)
+
+
+@app.post("/shop")
+def shop_order_submit():
+    customer = request.form.get("customer_name", "").strip()
+    summary = request.form.get("order_summary", "").strip() or None
+    try:
+        cups = int(request.form.get("cup_count", 1) or 1)
+    except ValueError:
+        cups = 1
+    if cups < 1:
+        cups = 1
+    total = parse_money(request.form.get("total_amount"))
+    pm = request.form.get("payment_method") or ""
+    valid = {x[0] for x in CUSTOMER_PAYMENT_METHODS}
+    mobile = request.form.get("paynow_mobile", "").strip()
+    if not customer:
+        flash("Please enter your name.", "error")
+        return redirect(url_for("shop_order_form"))
+    if pm not in valid:
+        flash("Choose a payment option.", "error")
+        return redirect(url_for("shop_order_form"))
+    note_bits = [f"customer_portal:{pm}"]
+    if pm == "paynow_qr":
+        note_bits.append("PayNow via QR — staff will confirm receipt.")
+    elif pm == "paynow_mobile":
+        if mobile:
+            note_bits.append(f"PayNow mobile: {mobile}")
+        else:
+            note_bits.append("PayNow via mobile number — provide at collection if needed.")
+    else:
+        note_bits.append("Pay on collection (cash / in person).")
+    notes = " · ".join(note_bits)
+    query(
+        """
+        INSERT INTO orders
+          (customer_name, order_summary, cup_count, total_amount, order_date, payment_notes, payment_method, order_status, payment_status)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,'Pending','Unpaid')
+        """,
+        (
+            customer,
+            summary,
+            cups,
+            total,
+            date.today(),
+            notes,
+            pm,
+        ),
+    )
+    flash("Order received — thank you. We will follow up if anything is unclear.", "success")
+    return redirect(url_for("shop_order_form"))
+
+
+@app.get("/analytics")
+def analytics_page():
+    menu_by_category = query(
+        """
+        SELECT COALESCE(NULLIF(TRIM(category), ''), 'Uncategorised') AS cat, COUNT(*)::int AS n
+        FROM margin_menu_items
+        GROUP BY 1 ORDER BY n DESC, cat
+        """,
+        fetch=True,
+    )
+    top_customers = query(
+        """
+        SELECT customer_name,
+               COUNT(*)::int AS order_count,
+               COALESCE(SUM(cup_count), 0)::int AS cups
+        FROM orders
+        GROUP BY customer_name
+        ORDER BY order_count DESC, cups DESC
+        LIMIT 20
+        """,
+        fetch=True,
+    )
+    matcha_vs_coffee = query(
+        """
+        SELECT COALESCE(cloud_type::text, 'unspecified') AS bucket, COUNT(*)::int AS n
+        FROM recipes WHERE is_latte
+        GROUP BY 1 ORDER BY n DESC
+        """,
+        fetch=True,
+    )
+    orders_by_weekday = query(
+        """
+        SELECT EXTRACT(ISODOW FROM COALESCE(order_date, created_at::date))::int AS dow,
+               COUNT(*)::int AS n
+        FROM orders
+        GROUP BY dow ORDER BY dow
+        """,
+        fetch=True,
+    )
+    return render_template(
+        "analytics.html",
+        menu_by_category=menu_by_category or [],
+        top_customers=top_customers or [],
+        matcha_vs_coffee=matcha_vs_coffee or [],
+        orders_by_weekday=orders_by_weekday or [],
+    )
+
+
+@app.post("/finance/inflows/<int:inflow_id>/link")
+def finance_inflow_link(inflow_id):
+    raw = (request.form.get("order_id") or "").strip()
+    oid = int(raw) if raw.isdigit() else None
+    query("UPDATE finance_cash_inflows SET linked_order_id = %s WHERE id = %s", (oid, inflow_id))
+    flash("Inflow linked to order." if oid else "Order link cleared.", "success")
+    return redirect(url_for("finance_summary"))
 
 
 @app.route("/export/<name>")
@@ -1018,10 +1325,11 @@ def export_table(name):
                 "txn_date",
                 "screenshot",
                 "person_in_charge",
+                "linked_order_id",
             ],
             """
             SELECT source_txn_number, amount, description, quantity_cups, txn_date::text,
-                   screenshot, person_in_charge
+                   screenshot, person_in_charge, linked_order_id
             FROM finance_cash_inflows ORDER BY id
             """,
         ),
@@ -1050,27 +1358,58 @@ def export_table(name):
                 "total_amount",
                 "order_date",
                 "payment_notes",
+                "payment_method",
                 "order_status",
                 "payment_status",
             ],
             """
             SELECT customer_name, order_summary, cup_count, total_amount, order_date::text,
-                   payment_notes, order_status, payment_status
+                   payment_notes, payment_method, order_status, payment_status
             FROM orders ORDER BY id
             """,
         ),
         "recipes": (
             "recipes.csv",
-            ["name", "drink_category", "is_latte", "cloud_type", "flavour_name", "notes"],
+            [
+                "name",
+                "drink_category",
+                "is_latte",
+                "cloud_type",
+                "flavour_name",
+                "notes",
+                "base_yield_cups",
+            ],
             """
-            SELECT name, drink_category, is_latte, cloud_type, flavour_name, notes
+            SELECT name, drink_category, is_latte, cloud_type, flavour_name, notes, base_yield_cups
             FROM recipes ORDER BY id
             """,
+        ),
+        "tasks": (
+            "tasks.csv",
+            [
+                "title",
+                "description",
+                "assigned_member_id",
+                "created_by_id",
+                "status",
+                "priority",
+                "created_at",
+            ],
+            """
+            SELECT title, description, assigned_member_id, created_by_id, status, priority,
+                   created_at::text
+            FROM tasks ORDER BY id
+            """,
+        ),
+        "members": (
+            "members.csv",
+            ["name", "role", "email"],
+            "SELECT name, role, email FROM members ORDER BY id",
         ),
     }
     if name not in mapping:
         flash("Unknown export.", "error")
-        return redirect(url_for("data_import_export"))
+        return redirect(url_for("dashboard"))
     fname, header, sql = mapping[name]
     rows = query(sql, fetch=True)
     out = []

@@ -416,4 +416,18 @@ v0.1.9
 # v0.1.9: FATAL Tenant or user not found = pooler got user "postgres" only; need postgres.<project-ref>.
 # App validates pooler host + pre-connect; maps OperationalError to RuntimeError with hint.
 
-v0.1.10
+v0.2.0
+update: supabase connection issues have been fixed and render now deploys with supabase 
+data migration and restructuring:
+1. remove all seeded data and the seed sql file
+2. insert all data from the databse import folder into the database once， looking through the recipe sheet and analysing thoroughly to rework the recipe feature on the web app to include ingredient readiness (reading from inventory), recipe steps (ticked off 1 by 1), and portioning/ratios function to adjust ingredients needed based on desired output
+3. link past orders and current new orders to the financial sheet to track cash inflow and costs side-by-side. 
+4. add a data anlysis page that looks at the statistics of each product (sort by matcha, coffee, by flavour, etc.), analyse regular customers, etc.
+5. end the migration phase by removing the import/export page, adding an option to export as .csv under every database page. refactor and optimise all tables in the database, inspired by the current data structure from the provided files but optimised for relational databage usage.
+
+new features:
+1. anti-cold start using the keep-alive monitor and an optimised cold-start. downtimes are on saturday to monday, where little to no users access the website. hotspots are wednesday, thursday and friday where multiple instances will be opened simultaneously across the span of time
+2. (beta) add an ordering system designed for customers. keep the ordering process simple and streamlined. payment, left at the bottom, allows options such as "paynow" via QR code or via mobile number, or pay via cash/in-person during collection. auth/separate interfaces for customer/employees are not necessary yet as this page is still in development
+3. reframe UI design in preparation for a rework involving substituing various titles/logos with images, adding motifs in the background and sprucing up the entire website in general (major UI rework will only come much later)
+
+v0.2.1

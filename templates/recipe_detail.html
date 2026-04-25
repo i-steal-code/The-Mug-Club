@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}{{ recipe.name }} · Recipe · Mug Club{% endblock %}
+{% block content %}
+<p class="subtitle"><a href="{{ url_for('recipes_page') }}">← All recipes</a></p>
+<h1>{{ recipe.name }}</h1>
+<p class="subtitle">
+  {% if recipe.is_latte %}Latte · {{ recipe.cloud_type or '—' }} cloud{% else %}Non-latte{% endif %}
+  · {{ recipe.drink_category or '—' }}
+  {% if recipe.flavour_name %}· flavour: {{ recipe.flavour_name }}{% endif %}
+</p>
+{% if recipe.notes %}<p class="subtitle">{{ recipe.notes }}</p>{% endif %}
+
+<section class="form-card" style="margin-bottom: 20px;">
+  <h2>Portion / ratio</h2>
+  <p class="subtitle">Scale ingredient quantities from <strong>base yield</strong> (cups this recipe is written for) to <strong>desired output</strong> (cups you are making).</p>
+  <form method="get" class="row" style="align-items: flex-end; flex-wrap: wrap; gap: 12px;">
+    <label>Desired output (cups)
+      <input type="number" name="desired_cups" min="0.25" step="any" value="{{ desired_output }}">
+    </label>
+    <button class="btn primary" type="submit">Recalculate</button>
+  </form>
+  <p class="subtitle">Current scale factor: <strong>{{ '%.4f' % factor }}</strong> (desired ÷ base).</p>
+</section>
+
+<section class="form-card" style="margin-bottom: 24px;">
+  <h2>Base yield (saved on recipe)</h2>
+  <form method="post" class="row" style="align-items: flex-end; flex-wrap: wrap; gap: 12px;">
+    <input type="hidden" name="action" value="set_yield">
+    {% if preserve_desired_cups %}<input type="hidden" name="desired_cups" value="{{ preserve_desired_cups }}">{% endif %}
+    <label>Cups this recipe is written for
+      <input type="number" name="base_yield_cups" min="0.25" step="any" value="{{ recipe.base_yield_cups or 1 }}" required>
+    </label>
+    <button class="btn" type="submit">Save base yield</button>
+  </form>
+</section>
+
+<h2>Ingredients</h2>
+{% if ingredients %}
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Ingredient</th>
+      <th>Qty (scaled)</th>
+      <th>Inventory match</th>
+      <th>Stock (g)</th>
+      <th>Ready?</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for ing in ingredients %}
+    <tr>
+      <td><strong>{{ ing.label }}</strong></td>
+      <td>{% if ing.scaled_qty is not none %}{{ '%.2f' % ing.scaled_qty }} {{ ing.unit }}{% else %}—{% endif %}</td>
+      <td class="desc">{{ ing.inventory_item_name or '—' }}</td>
+      <td>{% if ing.stock_qty_g is not none %}{{ ing.stock_qty_g }}{% else %}—{% endif %}</td>
+      <td>
+        {% if ing.stock_qty_g is none and ing.inventory_item_name %}<span class="pill warning">No row</span>
+        {% elif ing.scaled_qty is none %}<span class="pill">n/a</span>
+        {% elif ing.stock_ok %}<span class="pill ok">OK</span>
+        {% else %}<span class="pill danger">Short</span>{% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="subtitle">No ingredient lines yet. Add rows and set <em>Inventory item name</em> to match <code>inventory_items.item_name</code> for automatic stock checks.</p>
+{% endif %}
+
+<h3>Add ingredient line</h3>
+<form method="post" class="form-card">
+  <input type="hidden" name="action" value="add_ingredient">
+  {% if preserve_desired_cups %}<input type="hidden" name="desired_cups" value="{{ preserve_desired_cups }}">{% endif %}
+  <div class="row">
+    <label>Label <span class="req">*</span>
+      <input type="text" name="label" required maxlength="200" placeholder="e.g. Naoki matcha powder">
+    </label>
+    <label>Qty per base yield
+      <input type="text" name="qty_per_yield" placeholder="e.g. 2.5">
+    </label>
+    <label>Unit
+      <input type="text" name="unit" value="g" maxlength="20">
+    </label>
+  </div>
+  <label>Inventory item name (exact match to stock table)
+    <input type="text" name="inventory_item_name" maxlength="200" placeholder="must match inventory_items.item_name">
+  </label>
+  <div class="form-actions">
+    <button class="btn primary" type="submit">Add line</button>
+  </div>
+</form>
+
+<h2>Steps</h2>
+<ul class="step-list">
+{% for s in steps %}
+  <li class="step-item {% if s.completed %}step-done{% endif %}">
+    <form method="post" action="{{ url_for('recipe_step_toggle', recipe_id=recipe.id, step_id=s.id) }}" class="inline">
+      {% if preserve_desired_cups %}<input type="hidden" name="desired_cups" value="{{ preserve_desired_cups }}">{% endif %}
+      <button type="submit" class="btn ghost">{% if s.completed %}✓ Done{% else %}Mark done{% endif %}</button>
+    </form>
+    <span class="step-body">{{ s.body }}</span>
+  </li>
+{% else %}
+  <li class="subtitle">No steps yet.</li>
+{% endfor %}
+</ul>
+
+<h3>Add step</h3>
+<form method="post" class="form-card">
+  <input type="hidden" name="action" value="add_step">
+  {% if preserve_desired_cups %}<input type="hidden" name="desired_cups" value="{{ preserve_desired_cups }}">{% endif %}
+  <label>Step text
+    <textarea name="body" rows="3" required placeholder="One clear instruction per step…"></textarea>
+  </label>
+  <div class="form-actions">
+    <button class="btn primary" type="submit">Add step</button>
+  </div>
+</form>
+{% endblock %}

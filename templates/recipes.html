@@ -5,35 +5,40 @@
 <p class="subtitle">
   Every <strong>latte</strong> uses shared base ingredients, exactly one <strong>coffee</strong> or <strong>matcha</strong> cloud,
   and at most one <strong>flavour</strong>. <strong>Original</strong> matcha lattes have no flavour (leave flavour blank).
-  Ingredient amounts per recipe can be added later on this page in a future iteration.
+  Open a recipe to add <strong>steps</strong> (tick off), <strong>ingredient lines</strong> with inventory matching, and <strong>portion scaling</strong>.
 </p>
 
 <div class="page-header">
   <h2>Existing recipes</h2>
+  <a class="btn ghost" href="{{ url_for('export_table', name='recipes') }}">Export CSV</a>
 </div>
 <table class="data-table">
   <thead>
     <tr>
       <th>Name</th>
+      <th>Base yield</th>
       <th>Category</th>
       <th>Latte?</th>
       <th>Cloud</th>
       <th>Flavour</th>
       <th>Notes</th>
+      <th></th>
     </tr>
   </thead>
   <tbody>
   {% for r in recipes %}
     <tr>
       <td><strong>{{ r.name }}</strong></td>
+      <td>{{ r.base_yield_cups|default(1) }} cup(s)</td>
       <td>{{ r.drink_category or '—' }}</td>
       <td>{{ 'Yes' if r.is_latte else 'No' }}</td>
       <td>{{ r.cloud_type or '—' }}</td>
       <td>{{ r.flavour_name or '—' }}</td>
       <td class="desc">{{ r.notes or '—' }}</td>
+      <td><a class="btn small" href="{{ url_for('recipe_detail', recipe_id=r.id) }}">Open</a></td>
     </tr>
   {% else %}
-    <tr><td colspan="6">No recipes yet. Add one below.</td></tr>
+    <tr><td colspan="8">No recipes yet. Add one below.</td></tr>
   {% endfor %}
   </tbody>
 </table>
@@ -66,6 +71,10 @@
       <input type="text" name="flavour_name" maxlength="80" placeholder="strawberry, honey buttercream, …">
     </label>
   </div>
+
+  <label>Base yield (cups this recipe is written for)
+    <input type="number" name="base_yield_cups" min="0.25" step="any" value="1" title="Used to scale ingredient quantities">
+  </label>
 
   <label>Notes
     <textarea name="notes" rows="2" placeholder="Optional"></textarea>

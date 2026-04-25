@@ -1,4 +1,4 @@
-/* The Mug Club dashboard — v0.1.9 palette */
+/* The Mug Club dashboard — v0.2.0 palette */
 :root {
   --primary-bg:   #eeede9;
   --secondary:    #415b42;
@@ -22,6 +22,15 @@ body {
   background: var(--primary-bg);
   color: var(--text);
   line-height: 1.5;
+}
+
+/* Subtle motif — placeholder until a fuller visual rework */
+body.app-body {
+  background-color: var(--primary-bg);
+  background-image:
+    radial-gradient(circle at 12% 18%, rgba(65, 91, 66, 0.07) 0, transparent 42%),
+    radial-gradient(circle at 88% 8%, rgba(65, 91, 66, 0.05) 0, transparent 38%),
+    radial-gradient(circle at 70% 92%, rgba(180, 83, 9, 0.04) 0, transparent 35%);
 }
 
 .topbar {
@@ -77,6 +86,34 @@ h2 { font-size: 20px; margin-top: 28px; color: var(--secondary-dark); }
   flex-wrap: wrap;
   gap: 8px;
 }
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.muted { color: var(--muted); font-weight: 400; }
+
+.step-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 20px;
+}
+.step-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: var(--card);
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+}
+.step-done .step-body {
+  text-decoration: line-through;
+  opacity: 0.72;
+}
+.step-body { flex: 1; min-width: 0; }
 
 .btn {
   display: inline-block;

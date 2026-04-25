@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Analytics · Mug Club{% endblock %}
+{% block content %}
+<h1>Data snapshot</h1>
+<p class="subtitle">Quick views over margin menu rows, latte recipe mix, order cadence, and repeat customers.</p>
+
+{% set days = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] %}
+
+<section class="stats">
+  <div class="stat-card">
+    <h3>Menu rows by category</h3>
+    <table class="data-table">
+      <tbody>
+      {% for r in menu_by_category %}
+        <tr><td>{{ r.cat }}</td><td><strong>{{ r.n }}</strong></td></tr>
+      {% else %}
+        <tr><td colspan="2">No margin menu data.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="stat-card">
+    <h3>Latte clouds (recipes)</h3>
+    <table class="data-table">
+      <tbody>
+      {% for r in matcha_vs_coffee %}
+        <tr><td>{{ r.bucket }}</td><td><strong>{{ r.n }}</strong></td></tr>
+      {% else %}
+        <tr><td colspan="2">No latte recipes flagged.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<h2>Orders by weekday</h2>
+<p class="subtitle">Based on <code>order_date</code> when set, otherwise record date.</p>
+<table class="data-table">
+  <thead><tr><th>Day</th><th>Orders</th></tr></thead>
+  <tbody>
+  {% for r in orders_by_weekday %}
+    <tr>
+      <td>{% if r.dow is not none %}{{ days[r.dow|int] }}{% else %}—{% endif %}</td>
+      <td>{{ r.n }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="2">No orders yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Regular customers (top 20 by order count)</h2>
+<table class="data-table">
+  <thead><tr><th>Customer</th><th>Orders</th><th>Cups</th></tr></thead>
+  <tbody>
+  {% for r in top_customers %}
+    <tr>
+      <td><strong>{{ r.customer_name }}</strong></td>
+      <td>{{ r.order_count }}</td>
+      <td>{{ r.cups }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="3">No orders yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}
