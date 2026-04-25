@@ -8,14 +8,14 @@
     <a class="btn primary" href="{{ url_for('orders_add') }}">+ Add order</a>
   </div>
 </div>
-<p class="subtitle">Aligns with Google Form order capture: customer, summary, cups, and payment tracking.</p>
+<p class="subtitle">Structured orders using fixed product selections and quantities.</p>
 
 <table class="data-table">
   <thead>
     <tr>
       <th>#</th>
       <th>Customer</th>
-      <th>Summary</th>
+      <th>Products</th>
       <th>Cups</th>
       <th>Total ($)</th>
       <th>Date</th>
@@ -29,7 +29,7 @@
     <tr>
       <td>{{ o.id }}</td>
       <td>{{ o.customer_name }}</td>
-      <td class="desc">{{ o.order_summary or '—' }}</td>
+      <td class="desc">{{ o.order_items_summary or '—' }}</td>
       <td>{{ o.cup_count }}</td>
       <td>{% if o.total_amount is not none %}{{ '%.2f' % o.total_amount }}{% else %}—{% endif %}</td>
       <td>{{ o.order_date or '—' }}</td>

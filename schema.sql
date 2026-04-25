@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS inventory_items (
     id            SERIAL PRIMARY KEY,
     item_name     TEXT NOT NULL,
     qty_grams     DOUBLE PRECISION,
+    source_cost   DOUBLE PRECISION,
+    source_qty_g  DOUBLE PRECISION,
+    supplier      TEXT,
     remark        TEXT,
     updated_flag  BOOLEAN NOT NULL DEFAULT FALSE,
     UNIQUE (item_name)
@@ -66,7 +69,6 @@ CREATE TABLE IF NOT EXISTS margin_menu_items (
 CREATE TABLE IF NOT EXISTS orders (
     id               SERIAL PRIMARY KEY,
     customer_name    TEXT NOT NULL,
-    order_summary    TEXT,
     cup_count        INTEGER NOT NULL DEFAULT 1,
     total_amount     DOUBLE PRECISION,
     order_date       DATE,
@@ -77,6 +79,27 @@ CREATE TABLE IF NOT EXISTS orders (
     payment_status   TEXT NOT NULL DEFAULT 'Unpaid'
         CHECK (payment_status IN ('Unpaid', 'Paid', 'Refunded')),
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS products (
+    id             SERIAL PRIMARY KEY,
+    product_name   TEXT NOT NULL UNIQUE,
+    product_type   TEXT NOT NULL DEFAULT 'special'
+        CHECK (product_type IN ('latte', 'special')),
+    cloud_type     TEXT CHECK (cloud_type IS NULL OR cloud_type IN ('coffee', 'matcha')),
+    flavour_name   TEXT,
+    is_active      BOOLEAN NOT NULL DEFAULT TRUE,
+    display_order  INTEGER NOT NULL DEFAULT 0,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS order_items (
+    id            SERIAL PRIMARY KEY,
+    order_id      INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+    product_id    INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+    quantity      INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0),
+    unit_price    DOUBLE PRECISION,
+    remarks       TEXT
 );
 
 -- Financial tracker — cash inflows (revenue / order-like rows) --------------
@@ -131,10 +154,10 @@ CREATE TABLE IF NOT EXISTS recipe_ingredients (
     id                   SERIAL PRIMARY KEY,
     recipe_id            INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
     sort_order           INTEGER NOT NULL DEFAULT 0,
-    label                TEXT NOT NULL,
+    inventory_item_id    INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL,
+    label_override       TEXT,
     qty_per_yield        DOUBLE PRECISION,
-    unit                 TEXT NOT NULL DEFAULT 'g',
-    inventory_item_name  TEXT
+    unit                 TEXT NOT NULL DEFAULT 'g'
 );
 
 CREATE INDEX IF NOT EXISTS idx_tasks_assigned ON tasks(assigned_member_id);
@@ -145,3 +168,5 @@ CREATE INDEX IF NOT EXISTS idx_finance_outflow_date ON finance_cash_outflows(txn
 CREATE INDEX IF NOT EXISTS idx_recipe_steps_recipe ON recipe_steps(recipe_id);
 CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id);
 CREATE INDEX IF NOT EXISTS idx_finance_inflow_order ON finance_cash_inflows(linked_order_id);
+CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_order_items_product ON order_items(product_id);

@@ -49,7 +49,7 @@
   <tbody>
   {% for ing in ingredients %}
     <tr>
-      <td><strong>{{ ing.label }}</strong></td>
+      <td><strong>{{ ing.label_override or ing.inventory_item_name or '—' }}</strong></td>
       <td>{% if ing.scaled_qty is not none %}{{ '%.2f' % ing.scaled_qty }} {{ ing.unit }}{% else %}—{% endif %}</td>
       <td class="desc">{{ ing.inventory_item_name or '—' }}</td>
       <td>{% if ing.stock_qty_g is not none %}{{ ing.stock_qty_g }}{% else %}—{% endif %}</td>
@@ -64,7 +64,7 @@
   </tbody>
 </table>
 {% else %}
-<p class="subtitle">No ingredient lines yet. Add rows and set <em>Inventory item name</em> to match <code>inventory_items.item_name</code> for automatic stock checks.</p>
+<p class="subtitle">No ingredient lines yet. Add rows by selecting ingredients directly from inventory.</p>
 {% endif %}
 
 <h3>Add ingredient line</h3>
@@ -72,8 +72,13 @@
   <input type="hidden" name="action" value="add_ingredient">
   {% if preserve_desired_cups %}<input type="hidden" name="desired_cups" value="{{ preserve_desired_cups }}">{% endif %}
   <div class="row">
-    <label>Label <span class="req">*</span>
-      <input type="text" name="label" required maxlength="200" placeholder="e.g. Naoki matcha powder">
+    <label>Inventory ingredient <span class="req">*</span>
+      <select name="inventory_item_id" required>
+        <option value="">Select inventory item</option>
+        {% for it in inventory_items %}
+          <option value="{{ it.id }}">{{ it.item_name }}</option>
+        {% endfor %}
+      </select>
     </label>
     <label>Qty per base yield
       <input type="text" name="qty_per_yield" placeholder="e.g. 2.5">
@@ -82,8 +87,8 @@
       <input type="text" name="unit" value="g" maxlength="20">
     </label>
   </div>
-  <label>Inventory item name (exact match to stock table)
-    <input type="text" name="inventory_item_name" maxlength="200" placeholder="must match inventory_items.item_name">
+  <label>Label override (optional, for naming tweaks)
+    <input type="text" name="label_override" maxlength="200" placeholder="leave blank to use inventory item name">
   </label>
   <div class="form-actions">
     <button class="btn primary" type="submit">Add line</button>

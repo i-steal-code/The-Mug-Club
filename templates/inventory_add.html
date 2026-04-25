@@ -23,6 +23,18 @@
     <input type="text" name="remark" maxlength="500" placeholder="Optional note">
   </label>
 
+  <div class="row">
+    <label>Source cost ($)
+      <input type="text" name="source_cost" placeholder="e.g. 12.90">
+    </label>
+    <label>Source qty (g)
+      <input type="text" name="source_qty_g" placeholder="e.g. 500">
+    </label>
+    <label>Supplier
+      <input type="text" name="supplier" maxlength="120" placeholder="e.g. Redman">
+    </label>
+  </div>
+
   <div class="form-actions">
     <button class="btn primary" type="submit">Save</button>
     <a class="btn ghost" href="{{ url_for('inventory_list') }}">Cancel</a>

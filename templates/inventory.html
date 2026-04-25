@@ -18,6 +18,9 @@
     <tr>
       <th>Item</th>
       <th>Qty</th>
+      <th>Source cost ($)</th>
+      <th>Source qty (g)</th>
+      <th>Supplier</th>
       <th>Remark</th>
       <th>Updated?</th>
       <th>Status</th>
@@ -29,6 +32,9 @@
     <tr>
       <td><strong>{{ p.item_name }}</strong></td>
       <td>{% if q is not none %}{{ q }}{% else %}—{% endif %}</td>
+      <td>{% if p.source_cost is not none %}{{ '%.2f' % p.source_cost }}{% else %}—{% endif %}</td>
+      <td>{% if p.source_qty_g is not none %}{{ p.source_qty_g }}{% else %}—{% endif %}</td>
+      <td class="desc">{{ p.supplier or '—' }}</td>
       <td class="desc">{{ p.remark or '—' }}</td>
       <td>{{ 'Yes' if p.updated_flag else 'No' }}</td>
       <td>
@@ -42,29 +48,7 @@
       </td>
     </tr>
   {% else %}
-    <tr><td colspan="5">No inventory rows yet. Run <code>import_initial_data.py</code> once (see README) or add lines manually.</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
-
-<h2>Prep components (current week)</h2>
-<table class="data-table">
-  <thead>
-    <tr>
-      <th>Component</th>
-      <th>Qty to prep</th>
-      <th>Ready?</th>
-    </tr>
-  </thead>
-  <tbody>
-  {% for r in prep %}
-    <tr>
-      <td><strong>{{ r.component_name }}</strong></td>
-      <td>{{ r.qty_for_week or '—' }}</td>
-      <td>{{ 'Yes' if r.ready else 'No' }}</td>
-    </tr>
-  {% else %}
-    <tr><td colspan="3">No prep rows yet.</td></tr>
+    <tr><td colspan="8">No inventory rows yet. Load data via Supabase SQL insert script or add lines manually.</td></tr>
   {% endfor %}
   </tbody>
 </table>

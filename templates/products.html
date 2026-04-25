@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Products · Mug Club{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Products</h1>
+  <div class="header-actions">
+    <a class="btn ghost" href="{{ url_for('export_table', name='products') }}">Export products CSV</a>
+    <a class="btn ghost" href="{{ url_for('export_table', name='order_items') }}">Export order items CSV</a>
+  </div>
+</div>
+<p class="subtitle">
+  Naming conventions are editable here. Orders use these products as fixed dropdown selections.
+</p>
+
+<form method="post" class="form-card">
+  <h2>Add product</h2>
+  <div class="row">
+    <label>Product name <span class="req">*</span>
+      <input type="text" name="product_name" required maxlength="120" placeholder="e.g. Matcha strawberry latte">
+    </label>
+    <label>Type
+      <select name="product_type">
+        {% for t in product_types %}
+          <option value="{{ t }}">{{ t }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Cloud (latte only)
+      <select name="cloud_type">
+        <option value="">—</option>
+        <option value="coffee">coffee</option>
+        <option value="matcha">matcha</option>
+      </select>
+    </label>
+  </div>
+  <label>Flavour (optional)
+    <input type="text" name="flavour_name" maxlength="80">
+  </label>
+  <div class="form-actions">
+    <button class="btn primary" type="submit">Add product</button>
+  </div>
+</form>
+
+<h2>Existing products</h2>
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>ID</th>
+      <th>Name</th>
+      <th>Type</th>
+      <th>Cloud</th>
+      <th>Flavour</th>
+      <th>Active</th>
+      <th>Save</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for p in products %}
+    <tr>
+      <form method="post">
+        <input type="hidden" name="product_id" value="{{ p.id }}">
+        <td>{{ p.id }}</td>
+        <td><input type="text" name="product_name" value="{{ p.product_name }}" required maxlength="120"></td>
+        <td>
+          <select name="product_type">
+            {% for t in product_types %}
+              <option value="{{ t }}" {% if p.product_type == t %}selected{% endif %}>{{ t }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td>
+          <select name="cloud_type">
+            <option value="" {% if not p.cloud_type %}selected{% endif %}>—</option>
+            <option value="coffee" {% if p.cloud_type == 'coffee' %}selected{% endif %}>coffee</option>
+            <option value="matcha" {% if p.cloud_type == 'matcha' %}selected{% endif %}>matcha</option>
+          </select>
+        </td>
+        <td><input type="text" name="flavour_name" value="{{ p.flavour_name or '' }}" maxlength="80"></td>
+        <td><input type="checkbox" name="is_active" {% if p.is_active %}checked{% endif %}></td>
+        <td><button class="btn small" type="submit">Save</button></td>
+      </form>
+    </tr>
+  {% else %}
+    <tr><td colspan="7">No products yet. Add your first menu item above.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

@@ -61,7 +61,7 @@
       <td class="desc">{{ r.person_in_charge or '—' }}</td>
     </tr>
   {% else %}
-    <tr><td colspan="7">No inflow rows. Run <code>import_initial_data.py</code> or add rows in Supabase.</td></tr>
+    <tr><td colspan="7">No inflow rows. Insert rows via Supabase SQL editor or add rows manually.</td></tr>
   {% endfor %}
   </tbody>
 </table>

@@ -2,7 +2,7 @@
 
 Operations dashboard for inventory, orders, finance, tasks, and recipes.
 
-**Status: v0.2.0 (development).**
+**Status: v0.2.1 (development).**
 
 ## Stack
 
@@ -46,18 +46,24 @@ Render free web services spin down after idle time. You cannot fully remove cold
 1. Add an external monitor (e.g. UptimeRobot, Better Stack, or a cron job) that **GETs** `https://<your-service>.onrender.com/healthz` every **10–14 minutes**. That route returns plain `ok` and **does not connect to Postgres**, so it only keeps the HTTP worker warm.
 2. The **first real page hit** after a long sleep may still pay for DB connection + migrations on that worker; keep the app import light (this repo defers schema until first DB use).
 
-## One-time data import
+## One-time data load (manual SQL-first)
 
-Reference CSVs live in `database import/`. After `DATABASE_URL` is set, run once from the project root:
+For `v0.2.1`, the import flow is intentionally SQL-first (Supabase SQL editor), not script-driven:
 
-```bash
-set DATABASE_URL=postgresql://...
-python import_initial_data.py
-```
+1. Manually normalize names in your CSVs first (for example: `heavy cream` vs `whipping cream`, `honey buttercream` naming).
+2. Open `database import/supabase_manual_insert.sql`.
+3. Adjust values as needed and run in Supabase SQL editor.
 
-This loads inventory, margins, and the financial tracker CSVs. It does **not** parse `Mug Club recipes.txt` (unstructured prose); add recipes in the app or extend the script later.
+This keeps ingestion simple and transparent with no extra runtime dependency/debug loop.
 
-Each dashboard list page links to **Export CSV** for the same tables (no separate import UI).
+## Structured ordering model
+
+- Orders are now product-based via `products` + `order_items` tables (not free-text order blobs).
+- Customer and employee order forms use fixed dropdown selections for products.
+- Product naming conventions are editable in-app at the **Products** page.
+- Recipe ingredient rows now select ingredients from inventory via dropdown.
+
+Each dashboard list page links to **Export CSV** for relevant tables.
 
 ## Licence / project
 

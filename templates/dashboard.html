@@ -20,6 +20,11 @@
     <p class="big">{{ stats.orders_total }}</p>
     <small>{{ stats.orders_pending }} pending</small>
   </div>
+  <div class="stat-card">
+    <h3>Prep components</h3>
+    <p class="big">{{ stats.prep_ready }}/{{ stats.prep_total }}</p>
+    <small>Ready this week</small>
+  </div>
 </section>
 
 <section>
@@ -52,6 +57,35 @@
   </table>
   {% else %}
     <p>No tasks yet. <a href="{{ url_for('tasks_add') }}">Add your first task</a>.</p>
+  {% endif %}
+</section>
+
+<section>
+  <div class="page-header">
+    <h2>Prep components</h2>
+    <a class="btn ghost" href="{{ url_for('export_table', name='inventory_prep') }}">Export prep CSV</a>
+  </div>
+  {% if prep_rows %}
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Component</th>
+        <th>Qty to prep</th>
+        <th>Ready?</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in prep_rows %}
+      <tr>
+        <td><strong>{{ r.component_name }}</strong></td>
+        <td>{{ r.qty_for_week or '—' }}</td>
+        <td>{% if r.ready %}<span class="pill ok">Ready</span>{% else %}<span class="pill warning">Pending</span>{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p>No prep rows yet.</p>
   {% endif %}
 </section>
 {% endblock %}

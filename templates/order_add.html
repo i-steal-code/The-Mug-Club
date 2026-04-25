@@ -8,21 +8,29 @@
     <input type="text" name="customer_name" required maxlength="120">
   </label>
 
-  <label>Order summary (drinks / notes)
-    <textarea name="order_summary" rows="3" placeholder="e.g. 2 strawberry matcha lattes, 1 honey matcha"></textarea>
-  </label>
-
   <div class="row">
-    <label>Cup count
-      <input type="number" name="cup_count" min="1" value="1">
+    <label>Product <span class="req">*</span>
+      <select name="product_id" required>
+        <option value="">Select a product</option>
+        {% for p in products %}
+          <option value="{{ p.id }}">{{ p.product_name }}</option>
+        {% endfor %}
+      </select>
     </label>
-    <label>Total amount ($)
-      <input type="text" name="total_amount" placeholder="e.g. 8.00">
+    <label>Quantity (cups)
+      <input type="number" name="quantity" min="1" value="1" required>
+    </label>
+    <label>Unit price ($, optional)
+      <input type="text" name="unit_price" placeholder="e.g. 4.00">
     </label>
     <label>Order date
       <input type="text" name="order_date" placeholder="DD/MM/YYYY or YYYY-MM-DD">
     </label>
   </div>
+
+  <label>Item remarks / special request
+    <input type="text" name="line_remarks" maxlength="500" placeholder="Only free text field for order content">
+  </label>
 
   <label>Payment notes
     <input type="text" name="payment_notes" maxlength="500" placeholder="PayLah, PayNow, etc.">

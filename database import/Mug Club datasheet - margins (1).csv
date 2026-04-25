@@ -1,11 +1,11 @@
 "key in amt used, source cost and source qty. cost per cup is calculated with formula",,,,,,
 category,ingredient,cost per cup/$,amt used/g,source cost/$,source qty/g,supplier
-default ,cup + lid,0.1149,1,11.49,100,shoppee
-default ,straw,0.0549,1,5.49,100,shoppee
+default ,cup + lid,0.1149,1,11.49,100,shopee
+default ,straw,0.0549,1,5.49,100,shopee
 default ,ICE,0.1111111111,200,10,18000,JM ICE
 default ,milk,0.3485,100,6.97,2000,fairprice meiji
 multi,heavy cream,0.12,15,8,1000,redman millac gold
-matcha,naoki matcha,1.811875,5,28.99,80,shoppee
+matcha,naoki matcha,1.811875,5,28.99,80,shopee
 coffee,coffee capsule,0.84,5.7,8.4,57,fairprice starbucks
 multi,brown sugar,0.06375,15,3.4,800,fairprice
 strawberry,strawberry puree,0.325,15,3.9,180,don don donki
@@ -19,10 +19,10 @@ tiramisu,ladyfinger cookies,0.8475,60,5.65,400,redman balocco sponge finger
 ,,,,,,
 ,thing,cost,selling price,profit,,
 ,base (all lattes),0.6294111111,-,,,
-matcha,ORIGINAL,2.561286111,4,1.438713889,,
+matcha,original,2.561286111,4,1.438713889,,
 matcha,strawberry,2.886286111,4.5,1.613713889,,
 matcha,honey buttercream,2.988230556,4.5,1.511769444,,
-coffee,latte,1.469411111,4,2.530588889,,
+coffee,original,1.469411111,4,2.530588889,,
 coffee,honey buttercream,2.016355556,4.5,2.483644444,,
 coffee,mocha ,1.765085354,4.5,2.734914646,,
 special,iced chocolate,,4,,,

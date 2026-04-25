@@ -1,7 +1,7 @@
 """
 The Mug Club — operations dashboard (Flask + PostgreSQL / Supabase).
 Deploy: Render Web Service + Supabase Postgres (DATABASE_URL).
-v0.2.0 — lazy schema bootstrap, /healthz keep-alive, recipes with steps & scaling, analytics, customer shop (beta).
+v0.2.1 — SQL-first data load, structured products/orders, inventory source fields, prep on dashboard.
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ CUSTOMER_PAYMENT_METHODS = (
     ("paynow_mobile", "PayNow (mobile number)"),
     ("cash_collection", "Cash / in person at collection"),
 )
+PRODUCT_TYPES = ("latte", "special")
 
 
 def _host_is_literal_ip(host: str) -> bool:
@@ -230,6 +231,9 @@ _SCHEMA_MIGRATION_DDL = [
       DOUBLE PRECISION NOT NULL DEFAULT 1
     """,
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method TEXT",
+    "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS source_cost DOUBLE PRECISION",
+    "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS source_qty_g DOUBLE PRECISION",
+    "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS supplier TEXT",
     "ALTER TABLE finance_cash_inflows ADD COLUMN IF NOT EXISTS linked_order_id INTEGER",
     """
     DO $$ BEGIN
@@ -254,13 +258,48 @@ _SCHEMA_MIGRATION_DDL = [
         id SERIAL PRIMARY KEY,
         recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
         sort_order INTEGER NOT NULL DEFAULT 0,
-        label TEXT NOT NULL,
+        inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL,
+        label_override TEXT,
         qty_per_yield DOUBLE PRECISION,
-        unit TEXT NOT NULL DEFAULT 'g',
-        inventory_item_name TEXT
+        unit TEXT NOT NULL DEFAULT 'g'
     )
     """,
+    "ALTER TABLE recipe_ingredients ADD COLUMN IF NOT EXISTS inventory_item_id INTEGER",
+    "ALTER TABLE recipe_ingredients ADD COLUMN IF NOT EXISTS label_override TEXT",
+    """
+    DO $$ BEGIN
+      ALTER TABLE recipe_ingredients
+        ADD CONSTRAINT recipe_ingredients_inventory_item_id_fkey
+        FOREIGN KEY (inventory_item_id) REFERENCES inventory_items(id) ON DELETE SET NULL;
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$
+    """,
     "CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id)",
+    """
+    CREATE TABLE IF NOT EXISTS products (
+        id SERIAL PRIMARY KEY,
+        product_name TEXT NOT NULL UNIQUE,
+        product_type TEXT NOT NULL DEFAULT 'special'
+            CHECK (product_type IN ('latte', 'special')),
+        cloud_type TEXT CHECK (cloud_type IS NULL OR cloud_type IN ('coffee', 'matcha')),
+        flavour_name TEXT,
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        display_order INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS order_items (
+        id SERIAL PRIMARY KEY,
+        order_id INTEGER NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+        product_id INTEGER NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+        quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0),
+        unit_price DOUBLE PRECISION,
+        remarks TEXT
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id)",
+    "CREATE INDEX IF NOT EXISTS idx_order_items_product ON order_items(product_id)",
 ]
 
 
@@ -283,6 +322,25 @@ def ensure_schema_only() -> None:
                     stmt = stmt.strip()
                     if stmt:
                         cur.execute(stmt)
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) AS c FROM products")
+                has_products = int(cur.fetchone()["c"] or 0) > 0
+            if not has_products:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        INSERT INTO products (product_name, product_type, cloud_type, flavour_name, is_active)
+                        SELECT DISTINCT
+                          name,
+                          CASE WHEN is_latte THEN 'latte' ELSE 'special' END,
+                          cloud_type,
+                          NULLIF(flavour_name, ''),
+                          TRUE
+                        FROM recipes
+                        WHERE COALESCE(NULLIF(name, ''), '') <> ''
+                        ON CONFLICT (product_name) DO NOTHING
+                        """
+                    )
     finally:
         conn.close()
 
@@ -377,6 +435,44 @@ def csv_response(filename: str, rows: list[list], header: list[str] | None = Non
         data,
         mimetype="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def list_active_products():
+    return query(
+        """
+        SELECT *
+        FROM products
+        WHERE is_active = TRUE
+        ORDER BY display_order, product_name
+        """,
+        fetch=True,
+    ) or []
+
+
+def recalc_order_totals(order_id: int) -> None:
+    agg = query(
+        """
+        SELECT
+            COALESCE(SUM(quantity), 0)::int AS cups,
+            SUM(
+                CASE WHEN unit_price IS NOT NULL
+                     THEN unit_price * quantity
+                     ELSE 0
+                END
+            ) AS amount
+        FROM order_items
+        WHERE order_id = %s
+        """,
+        (order_id,),
+        fetch=True,
+        one=True,
+    )
+    cups = int(agg["cups"] or 0)
+    amount = float(agg["amount"] or 0) if agg.get("amount") is not None else None
+    query(
+        "UPDATE orders SET cup_count = %s, total_amount = %s WHERE id = %s",
+        (max(cups, 1), amount, order_id),
     )
 
 
@@ -657,15 +753,38 @@ def import_orders_csv(stream, replace: bool = False) -> int:
         with conn:
             with conn.cursor() as cur:
                 if replace:
+                    cur.execute("DELETE FROM order_items")
                     cur.execute("DELETE FROM orders")
                 for t in rows_out:
+                    cust, summary, cups, total, odate, notes, pm, ost, pst = t
                     cur.execute(
                         """
                         INSERT INTO orders
-                          (customer_name, order_summary, cup_count, total_amount, order_date, payment_notes, payment_method, order_status, payment_status)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                          (customer_name, cup_count, total_amount, order_date, payment_notes, payment_method, order_status, payment_status)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                        RETURNING id
                         """,
-                        t,
+                        (cust, cups, total, odate, notes, pm, ost, pst),
+                    )
+                    order_id = cur.fetchone()["id"]
+                    pname = summary or "Imported item"
+                    cur.execute(
+                        """
+                        INSERT INTO products (product_name, product_type, is_active)
+                        VALUES (%s, 'special', TRUE)
+                        ON CONFLICT (product_name) DO UPDATE SET product_name = EXCLUDED.product_name
+                        RETURNING id
+                        """,
+                        (pname,),
+                    )
+                    product_id = cur.fetchone()["id"]
+                    unit_price = (total / cups) if (total is not None and cups) else None
+                    cur.execute(
+                        """
+                        INSERT INTO order_items (order_id, product_id, quantity, unit_price)
+                        VALUES (%s,%s,%s,%s)
+                        """,
+                        (order_id, product_id, max(cups, 1), unit_price),
                     )
         return len(rows_out)
     finally:
@@ -693,6 +812,12 @@ def dashboard():
             fetch=True,
             one=True,
         )["c"],
+        "prep_total": query("SELECT COUNT(*) AS c FROM inventory_prep", fetch=True, one=True)["c"],
+        "prep_ready": query(
+            "SELECT COUNT(*) AS c FROM inventory_prep WHERE ready = TRUE",
+            fetch=True,
+            one=True,
+        )["c"],
     }
     recent_tasks = query(
         """
@@ -707,7 +832,16 @@ def dashboard():
         """,
         fetch=True,
     )
-    return render_template("dashboard.html", stats=stats, recent_tasks=recent_tasks)
+    prep_rows = query(
+        "SELECT * FROM inventory_prep ORDER BY component_name",
+        fetch=True,
+    )
+    return render_template(
+        "dashboard.html",
+        stats=stats,
+        recent_tasks=recent_tasks,
+        prep_rows=prep_rows or [],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -797,11 +931,7 @@ def inventory_list():
         "SELECT * FROM inventory_items ORDER BY item_name",
         fetch=True,
     )
-    prep = query(
-        "SELECT * FROM inventory_prep ORDER BY component_name",
-        fetch=True,
-    )
-    return render_template("inventory.html", items=items, prep=prep)
+    return render_template("inventory.html", items=items)
 
 
 @app.route("/inventory/add", methods=["GET", "POST"])
@@ -813,6 +943,9 @@ def inventory_add():
         except ValueError:
             flash("Quantity must be a number.", "error")
             return redirect(url_for("inventory_add"))
+        source_cost = parse_money(request.form.get("source_cost"))
+        source_qty_g = parse_money(request.form.get("source_qty_g"))
+        supplier = request.form.get("supplier", "").strip() or None
         remark = request.form.get("remark", "").strip() or None
         updated = request.form.get("updated_flag") == "on"
         if not name:
@@ -820,14 +953,18 @@ def inventory_add():
             return redirect(url_for("inventory_add"))
         query(
             """
-            INSERT INTO inventory_items (item_name, qty_grams, remark, updated_flag)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO inventory_items
+              (item_name, qty_grams, source_cost, source_qty_g, supplier, remark, updated_flag)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (item_name) DO UPDATE SET
               qty_grams = EXCLUDED.qty_grams,
+              source_cost = EXCLUDED.source_cost,
+              source_qty_g = EXCLUDED.source_qty_g,
+              supplier = EXCLUDED.supplier,
               remark = EXCLUDED.remark,
               updated_flag = EXCLUDED.updated_flag
             """,
-            (name, qty, remark, updated),
+            (name, qty, source_cost, source_qty_g, supplier, remark, updated),
         )
         flash("Inventory item saved.", "success")
         return redirect(url_for("inventory_list"))
@@ -841,8 +978,17 @@ def inventory_add():
 def orders_list():
     orders = query(
         """
-        SELECT * FROM orders
-        ORDER BY COALESCE(order_date, created_at::date) DESC, id DESC
+        SELECT
+            o.*,
+            COALESCE(
+                STRING_AGG(p.product_name || ' x' || oi.quantity, ', ' ORDER BY oi.id),
+                '—'
+            ) AS order_items_summary
+        FROM orders o
+        LEFT JOIN order_items oi ON oi.order_id = o.id
+        LEFT JOIN products p ON p.id = oi.product_id
+        GROUP BY o.id
+        ORDER BY COALESCE(o.order_date, o.created_at::date) DESC, o.id DESC
         """,
         fetch=True,
     )
@@ -856,14 +1002,18 @@ def orders_list():
 
 @app.route("/orders/add", methods=["GET", "POST"])
 def orders_add():
+    products = list_active_products()
     if request.method == "POST":
         customer = request.form.get("customer_name", "").strip()
-        summary = request.form.get("order_summary", "").strip() or None
+        product_id = request.form.get("product_id", type=int)
         try:
-            cups = int(request.form.get("cup_count", 1) or 1)
+            cups = int(request.form.get("quantity", 1) or 1)
         except ValueError:
             cups = 1
-        total = parse_money(request.form.get("total_amount"))
+        if cups < 1:
+            cups = 1
+        total = parse_money(request.form.get("unit_price"))
+        line_remarks = request.form.get("line_remarks", "").strip() or None
         odate = parse_date(request.form.get("order_date")) or date.today()
         notes = request.form.get("payment_notes", "").strip() or None
         payment_method = (request.form.get("payment_method") or "").strip() or None
@@ -871,23 +1021,37 @@ def orders_add():
         payment_status = request.form.get("payment_status", "Unpaid")
         if not customer:
             flash("Customer name is required.", "error")
+        elif not product_id:
+            flash("Select a product.", "error")
         elif order_status not in ORDER_STATUSES or payment_status not in PAYMENT_STATUSES:
             flash("Invalid status.", "error")
         else:
-            query(
+            row = query(
                 """
                 INSERT INTO orders
-                  (customer_name, order_summary, cup_count, total_amount, order_date, payment_notes, payment_method, order_status, payment_status)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                  (customer_name, cup_count, total_amount, order_date, payment_notes, payment_method, order_status, payment_status)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING id
                 """,
-                (customer, summary, cups, total, odate, notes, payment_method, order_status, payment_status),
+                (customer, cups, total, odate, notes, payment_method, order_status, payment_status),
+                fetch=True,
+                one=True,
             )
+            query(
+                """
+                INSERT INTO order_items (order_id, product_id, quantity, unit_price, remarks)
+                VALUES (%s,%s,%s,%s,%s)
+                """,
+                (row["id"], product_id, cups, total, line_remarks),
+            )
+            recalc_order_totals(int(row["id"]))
             flash("Order added.", "success")
             return redirect(url_for("orders_list"))
     return render_template(
         "order_add.html",
         order_statuses=ORDER_STATUSES,
         payment_statuses=PAYMENT_STATUSES,
+        products=products,
     )
 
 
@@ -904,6 +1068,52 @@ def orders_update_status(order_id):
         )
     flash("Order updated.", "success")
     return redirect(url_for("orders_list"))
+
+
+@app.route("/products", methods=["GET", "POST"])
+def products_page():
+    if request.method == "POST":
+        pid = request.form.get("product_id", type=int)
+        name = request.form.get("product_name", "").strip()
+        ptype = request.form.get("product_type", "special")
+        cloud_type = request.form.get("cloud_type") or None
+        flavour = request.form.get("flavour_name", "").strip() or None
+        is_active = request.form.get("is_active") == "on"
+        if ptype not in PRODUCT_TYPES:
+            flash("Invalid product type.", "error")
+            return redirect(url_for("products_page"))
+        if ptype != "latte":
+            cloud_type = None
+        if not name:
+            flash("Product name is required.", "error")
+            return redirect(url_for("products_page"))
+        if pid:
+            query(
+                """
+                UPDATE products
+                SET product_name = %s, product_type = %s, cloud_type = %s,
+                    flavour_name = %s, is_active = %s
+                WHERE id = %s
+                """,
+                (name, ptype, cloud_type, flavour, is_active, pid),
+            )
+            flash("Product updated.", "success")
+        else:
+            query(
+                """
+                INSERT INTO products (product_name, product_type, cloud_type, flavour_name, is_active)
+                VALUES (%s,%s,%s,%s,%s)
+                """,
+                (name, ptype, cloud_type, flavour, True),
+            )
+            flash("Product added.", "success")
+        return redirect(url_for("products_page"))
+
+    products = query(
+        "SELECT * FROM products ORDER BY display_order, product_name",
+        fetch=True,
+    )
+    return render_template("products.html", products=products or [], product_types=PRODUCT_TYPES)
 
 
 # ---------------------------------------------------------------------------
@@ -944,7 +1154,7 @@ def finance_summary():
     )["s"]
     recent_orders = query(
         """
-        SELECT id, customer_name, order_date, order_summary
+        SELECT id, customer_name, order_date
         FROM orders
         ORDER BY COALESCE(order_date, created_at::date) DESC, id DESC
         LIMIT 200
@@ -1073,15 +1283,15 @@ def recipe_detail(recipe_id):
                 )
                 flash("Step added.", "success")
         elif action == "add_ingredient":
-            label = request.form.get("label", "").strip()
-            if label:
+            inventory_item_id = request.form.get("inventory_item_id", type=int)
+            label_override = request.form.get("label_override", "").strip() or None
+            if inventory_item_id:
                 qraw = (request.form.get("qty_per_yield") or "").strip()
                 try:
                     qty = float(qraw) if qraw else None
                 except ValueError:
                     qty = None
                 unit = (request.form.get("unit") or "g").strip() or "g"
-                invn = (request.form.get("inventory_item_name") or "").strip() or None
                 so = request.form.get("sort_order", type=int)
                 if so is None:
                     r = query(
@@ -1093,10 +1303,11 @@ def recipe_detail(recipe_id):
                     so = r["n"]
                 query(
                     """
-                    INSERT INTO recipe_ingredients (recipe_id, sort_order, label, qty_per_yield, unit, inventory_item_name)
+                    INSERT INTO recipe_ingredients
+                      (recipe_id, sort_order, inventory_item_id, label_override, qty_per_yield, unit)
                     VALUES (%s,%s,%s,%s,%s,%s)
                     """,
-                    (recipe_id, so, label, qty, unit, invn),
+                    (recipe_id, so, inventory_item_id, label_override, qty, unit),
                 )
                 flash("Ingredient line added.", "success")
         elif action == "set_yield":
@@ -1119,8 +1330,18 @@ def recipe_detail(recipe_id):
         fetch=True,
     )
     ingredients = query(
-        "SELECT * FROM recipe_ingredients WHERE recipe_id = %s ORDER BY sort_order, id",
+        """
+        SELECT ri.*, ii.item_name AS inventory_item_name, ii.qty_grams AS stock_qty_g
+        FROM recipe_ingredients ri
+        LEFT JOIN inventory_items ii ON ii.id = ri.inventory_item_id
+        WHERE ri.recipe_id = %s
+        ORDER BY ri.sort_order, ri.id
+        """,
         (recipe_id,),
+        fetch=True,
+    )
+    inventory_items = query(
+        "SELECT id, item_name FROM inventory_items ORDER BY item_name",
         fetch=True,
     )
     enriched = []
@@ -1128,22 +1349,11 @@ def recipe_detail(recipe_id):
         row = dict(ing)
         qpy = ing.get("qty_per_yield")
         row["scaled_qty"] = (float(qpy) * factor) if qpy is not None else None
-        invn = (ing.get("inventory_item_name") or "").strip()
-        stock = None
-        if invn:
-            stock = query(
-                "SELECT qty_grams, item_name FROM inventory_items WHERE lower(trim(item_name)) = lower(trim(%s)) LIMIT 1",
-                (invn,),
-                fetch=True,
-                one=True,
-            )
-        row["stock_qty_g"] = stock["qty_grams"] if stock else None
-        row["stock_item_name"] = stock["item_name"] if stock else None
+        row["stock_item_name"] = ing.get("inventory_item_name")
         row["stock_ok"] = bool(
-            stock
-            and stock.get("qty_grams") is not None
+            ing.get("stock_qty_g") is not None
             and row["scaled_qty"] is not None
-            and float(stock["qty_grams"]) >= float(row["scaled_qty"])
+            and float(ing["stock_qty_g"]) >= float(row["scaled_qty"])
         )
         enriched.append(row)
 
@@ -1155,6 +1365,7 @@ def recipe_detail(recipe_id):
         factor=factor,
         desired_output=float(desired) if desired is not None else float(recipe.get("base_yield_cups") or 1),
         preserve_desired_cups=dc_raw,
+        inventory_items=inventory_items or [],
     )
 
 
@@ -1173,25 +1384,33 @@ def recipe_step_toggle(recipe_id, step_id):
 
 @app.get("/shop")
 def shop_order_form():
-    return render_template("shop.html", payment_methods=CUSTOMER_PAYMENT_METHODS)
+    return render_template(
+        "shop.html",
+        payment_methods=CUSTOMER_PAYMENT_METHODS,
+        products=list_active_products(),
+    )
 
 
 @app.post("/shop")
 def shop_order_submit():
     customer = request.form.get("customer_name", "").strip()
-    summary = request.form.get("order_summary", "").strip() or None
+    product_id = request.form.get("product_id", type=int)
     try:
-        cups = int(request.form.get("cup_count", 1) or 1)
+        cups = int(request.form.get("quantity", 1) or 1)
     except ValueError:
         cups = 1
     if cups < 1:
         cups = 1
-    total = parse_money(request.form.get("total_amount"))
+    unit_price = parse_money(request.form.get("unit_price"))
+    special_request = request.form.get("special_request", "").strip() or None
     pm = request.form.get("payment_method") or ""
     valid = {x[0] for x in CUSTOMER_PAYMENT_METHODS}
     mobile = request.form.get("paynow_mobile", "").strip()
     if not customer:
         flash("Please enter your name.", "error")
+        return redirect(url_for("shop_order_form"))
+    if not product_id:
+        flash("Please choose a product.", "error")
         return redirect(url_for("shop_order_form"))
     if pm not in valid:
         flash("Choose a payment option.", "error")
@@ -1207,22 +1426,32 @@ def shop_order_submit():
     else:
         note_bits.append("Pay on collection (cash / in person).")
     notes = " · ".join(note_bits)
-    query(
+    row = query(
         """
         INSERT INTO orders
-          (customer_name, order_summary, cup_count, total_amount, order_date, payment_notes, payment_method, order_status, payment_status)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,'Pending','Unpaid')
+          (customer_name, cup_count, total_amount, order_date, payment_notes, payment_method, order_status, payment_status)
+        VALUES (%s,%s,%s,%s,%s,%s,'Pending','Unpaid')
+        RETURNING id
         """,
         (
             customer,
-            summary,
             cups,
-            total,
+            unit_price * cups if unit_price is not None else None,
             date.today(),
             notes,
             pm,
         ),
+        fetch=True,
+        one=True,
     )
+    query(
+        """
+        INSERT INTO order_items (order_id, product_id, quantity, unit_price, remarks)
+        VALUES (%s,%s,%s,%s,%s)
+        """,
+        (row["id"], product_id, cups, unit_price, special_request),
+    )
+    recalc_order_totals(int(row["id"]))
     flash("Order received — thank you. We will follow up if anything is unclear.", "success")
     return redirect(url_for("shop_order_form"))
 
@@ -1266,12 +1495,35 @@ def analytics_page():
         """,
         fetch=True,
     )
+    prep_completion = query(
+        """
+        SELECT
+            COUNT(*)::int AS total,
+            COALESCE(SUM(CASE WHEN ready THEN 1 ELSE 0 END), 0)::int AS ready
+        FROM inventory_prep
+        """,
+        fetch=True,
+        one=True,
+    )
+    top_products = query(
+        """
+        SELECT p.product_name, SUM(oi.quantity)::int AS cups
+        FROM order_items oi
+        JOIN products p ON p.id = oi.product_id
+        GROUP BY p.product_name
+        ORDER BY cups DESC, p.product_name
+        LIMIT 20
+        """,
+        fetch=True,
+    )
     return render_template(
         "analytics.html",
         menu_by_category=menu_by_category or [],
         top_customers=top_customers or [],
         matcha_vs_coffee=matcha_vs_coffee or [],
         orders_by_weekday=orders_by_weekday or [],
+        prep_completion=prep_completion or {"total": 0, "ready": 0},
+        top_products=top_products or [],
     )
 
 
@@ -1289,8 +1541,19 @@ def export_table(name):
     mapping = {
         "inventory_items": (
             "inventory_items.csv",
-            ["item_name", "qty_grams", "remark", "updated_flag"],
-            "SELECT item_name, qty_grams, remark, updated_flag FROM inventory_items ORDER BY item_name",
+            [
+                "item_name",
+                "qty_grams",
+                "source_cost",
+                "source_qty_g",
+                "supplier",
+                "remark",
+                "updated_flag",
+            ],
+            """
+            SELECT item_name, qty_grams, source_cost, source_qty_g, supplier, remark, updated_flag
+            FROM inventory_items ORDER BY item_name
+            """,
         ),
         "inventory_prep": (
             "inventory_prep.csv",
@@ -1353,7 +1616,7 @@ def export_table(name):
             "orders.csv",
             [
                 "customer_name",
-                "order_summary",
+                "order_items",
                 "cup_count",
                 "total_amount",
                 "order_date",
@@ -1363,9 +1626,31 @@ def export_table(name):
                 "payment_status",
             ],
             """
-            SELECT customer_name, order_summary, cup_count, total_amount, order_date::text,
-                   payment_notes, payment_method, order_status, payment_status
-            FROM orders ORDER BY id
+            SELECT
+              o.customer_name,
+              COALESCE(STRING_AGG(p.product_name || ' x' || oi.quantity, ', ' ORDER BY oi.id), '') AS order_items,
+              o.cup_count, o.total_amount, o.order_date::text,
+              o.payment_notes, o.payment_method, o.order_status, o.payment_status
+            FROM orders o
+            LEFT JOIN order_items oi ON oi.order_id = o.id
+            LEFT JOIN products p ON p.id = oi.product_id
+            GROUP BY o.id
+            ORDER BY o.id
+            """,
+        ),
+        "products": (
+            "products.csv",
+            ["product_name", "product_type", "cloud_type", "flavour_name", "is_active"],
+            "SELECT product_name, product_type, cloud_type, flavour_name, is_active FROM products ORDER BY id",
+        ),
+        "order_items": (
+            "order_items.csv",
+            ["order_id", "product_id", "product_name", "quantity", "unit_price", "remarks"],
+            """
+            SELECT oi.order_id, oi.product_id, p.product_name, oi.quantity, oi.unit_price, oi.remarks
+            FROM order_items oi
+            LEFT JOIN products p ON p.id = oi.product_id
+            ORDER BY oi.id
             """,
         ),
         "recipes": (

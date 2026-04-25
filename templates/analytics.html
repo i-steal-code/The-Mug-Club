@@ -2,7 +2,7 @@
 {% block title %}Analytics · Mug Club{% endblock %}
 {% block content %}
 <h1>Data snapshot</h1>
-<p class="subtitle">Quick views over margin menu rows, latte recipe mix, order cadence, and repeat customers.</p>
+<p class="subtitle">Quick views over menu mix, latte profile, prep readiness, product demand, order cadence, and repeat customers.</p>
 
 {% set days = ['', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] %}
 
@@ -45,6 +45,26 @@
     </tr>
   {% else %}
     <tr><td colspan="2">No orders yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Prep readiness</h2>
+<p class="subtitle">
+  {{ prep_completion.ready }} of {{ prep_completion.total }} prep components marked ready.
+</p>
+
+<h2>Top ordered products</h2>
+<table class="data-table">
+  <thead><tr><th>Product</th><th>Cups ordered</th></tr></thead>
+  <tbody>
+  {% for r in top_products %}
+    <tr>
+      <td><strong>{{ r.product_name }}</strong></td>
+      <td>{{ r.cups }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="2">No structured order items yet.</td></tr>
   {% endfor %}
   </tbody>
 </table>

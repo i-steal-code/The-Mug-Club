@@ -9,18 +9,25 @@
     <input type="text" name="customer_name" required maxlength="120" autocomplete="name">
   </label>
 
-  <label>What would you like?
-    <textarea name="order_summary" rows="4" placeholder="e.g. 2 iced strawberry matcha lattes, less sweet"></textarea>
-  </label>
-
   <div class="row">
-    <label>Number of cups
-      <input type="number" name="cup_count" min="1" value="1" required>
+    <label>Product <span class="req">*</span>
+      <select name="product_id" required>
+        <option value="">Choose an item</option>
+        {% for p in products %}
+          <option value="{{ p.id }}">{{ p.product_name }}</option>
+        {% endfor %}
+      </select>
     </label>
-    <label>Total (optional, $)
-      <input type="text" name="total_amount" placeholder="leave blank if unsure">
+    <label>Number of cups
+      <input type="number" name="quantity" min="1" value="1" required>
+    </label>
+    <label>Price per cup (optional, $)
+      <input type="text" name="unit_price" placeholder="leave blank if unsure">
     </label>
   </div>
+  <label>Special request / remarks
+    <input type="text" name="special_request" maxlength="300" placeholder="e.g. less sweet">
+  </label>
 
   <fieldset class="form-card" style="margin-top: 20px;">
     <legend>Payment <small class="muted">choose one</small></legend>
