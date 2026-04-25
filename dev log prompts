@@ -431,3 +431,13 @@ new features:
 3. reframe UI design in preparation for a rework involving substituing various titles/logos with images, adding motifs in the background and sprucing up the entire website in general (major UI rework will only come much later)
 
 v0.2.1
+patches:
+1. using import_initial_data is not a very intelligent solution. optimise for simplicity by directly inserting the .csv data into the database with sql run on supabase 
+2. orders on customer and employee side should be actual products, not blobs of text that ruin the entire point of using a database. latte products follow the naming convention of [coffe/matcha][flavour], and special items are standalone items. every single data point/selection should be a fixed drop-down selection, not text to be input by employees or customers. the only situation where there will be text input is for integers or for remarks/special requests on orders 
+3. recipe should be an interactive table where a new ingredient can be added (a drop-down selection of ingredients from inventory) and a portion specification. 
+4. where are the supplier and source cost columns in inventory?
+5. move prep components table out of the inventory page into the dashboard and integrate its data with the analytics page to analyse past orders 
+6. some data may be inconsistent; whipping cream sometimes written as heavy cream, honey buttercream matcha latte sometimes written as honey matcha latte, etc. gather and fix all inconsistent data across tables MANUALLY in the .csv files before insertion into database MANUALLY (no funny code that doesnt run without 5 dependencies and 3 hours of debugging)
+7. make naming conventions modifiable; ingredient names can be modified, product names can be modified on the order/inventory tables, etc. 
+
+v0.2.2
