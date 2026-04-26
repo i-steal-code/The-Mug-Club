@@ -449,3 +449,20 @@ patches:
 5. selling price of products will also be attached onto the product/recipe card. on the shop page, there should be a interactive list to add products (dropdown selection with images, insert placeholder images of a cup image for now) and a short description and price attached to the product. final price will be tabulated at the bottom and lead to the payment options section. insert a placeholder image under the paynow QR with the paynow mobile number below thr QR code, then remove the paynow mobile number text input as that is not how the paynow system works in singapore
 
 v0.2.3
+patches:
+1. implement anti-cold start features and devise troubleshooting plan
+2. put the cash inflow and expenditure table parallel, side-by-side instead
+3. preview on order page does not update to show cash values. 
+4. product cards should be displayed on the dropdown selection menu instead of adding a separate menu underneath everything 
+5. there should be a special request/remark input for every individual product
+6. if paynow is selected, add a footnote on the payment card to indicate that order will only be processed after payment is verified
+7. do not display employee IDs in the staff list. change page name to "staff"
+8. re-parse the financial data to extract a customer name column, product column and change "person" to "payment" with 2 states: "paynow" and "cash", then add another column to indicate payment status. use a new row for every singular product bought. data can be normalised to 3NF in other pages, but financial sheet should stay as 1NF raw data for low level administrative work
+9. in the orders table, payment method should be paynow or cash (from the shop order form), and payment should stay the same. shift order status to the right-most of the table and let it take on 3 different states of pending, processing and completed. to simplify UX, make order status and payment buttons that morph to the next state when clicked (e.g. upon creation order shows "pending" and "unpaid" button, but after clicking order status it changes to "processing" then "completed"). orders on the order page should disappear once order status is completed and payment is paid.
+10. finance sheet should be updated with the orders page; once an order is finished (order status completed, payment paid), the order should go into the finance table and ready to use on other pages
+11. why is there a linked order column in the finance sheet? all orders are to be as autonomous as possible, with indexing done by the relational database and by the web app's own algorithm
+12. rework the product page again - the organisation system is still messed up; introduce a new object "component" that replaces the product recipe card. each component is created with a recipe and name. first step of creation is product name, component type (dropdown selection of currently registered components, with another function to add new component type). after that should be a list (similar to the order page ordering list) to add ingredients (from inventory) with amount in grams. below that should be a similar list that instead adds component steps 1 by 1. think of component recipes as the end branch of a product recipe, where the product recipe's "ingredients" are the components that have their own recipes. some product recipes also have additional ingredients that are not components, so components can be treated more like a ingredient from the inventory (especially for flavour components). 
+13. turn the products page into a recipe databank (do not rename) with a menu at the top that shows all the products, and clicking them should lead to the product's specific recipe
+
+notes:
+ensure all data is consistent and normalised properly
