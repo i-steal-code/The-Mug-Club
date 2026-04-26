@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+{% block title %}Components · Mug Club{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Components</h1>
+  <div class="header-actions">
+    <a class="btn ghost" href="{{ url_for('products_page') }}">← Recipe databank</a>
+  </div>
+</div>
+<p class="subtitle">
+  Components are reusable building blocks (matcha cloud, buttercream, syrups). Each has its own
+  ingredient list and step list. Product recipes consume components the same way they consume
+  raw inventory items.
+</p>
+
+<form method="post" class="form-card">
+  <h2>Register a new component</h2>
+  <div class="row">
+    <label>Name <span class="req">*</span>
+      <input type="text" name="name" required maxlength="120" placeholder="e.g. Matcha cloud">
+    </label>
+    <label>Component type
+      <input type="text" name="component_type" maxlength="80" list="component-type-suggestions" placeholder="e.g. cloud, syrup, base">
+      <datalist id="component-type-suggestions">
+        {% for t in component_types %}<option value="{{ t }}">{% endfor %}
+      </datalist>
+    </label>
+    <label>Base yield (per recipe)
+      <input type="number" name="base_yield" min="0.25" step="any" value="1">
+    </label>
+  </div>
+  <label>Notes / remarks
+    <textarea name="notes" rows="2" placeholder="Storage / shelf life / ratio hints"></textarea>
+  </label>
+  <div class="form-actions"><button class="btn primary" type="submit">Save component</button></div>
+</form>
+
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Name</th>
+      <th>Type</th>
+      <th>Base yield</th>
+      <th>Ingredients</th>
+      <th>Steps</th>
+      <th>Notes</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for c in components %}
+    <tr>
+      <td><strong>{{ c.name }}</strong></td>
+      <td>{{ c.component_type or '—' }}</td>
+      <td>{{ '%.2f' % (c.base_yield or 1) }}</td>
+      <td>{{ c.ingredient_count }}</td>
+      <td>{{ c.step_count }}</td>
+      <td class="desc">{{ c.notes or '—' }}</td>
+      <td>
+        <a class="btn small" href="{{ url_for('component_detail', component_id=c.id) }}">Open</a>
+        <form method="post" action="{{ url_for('component_delete', component_id=c.id) }}" class="inline" onsubmit="return confirm('Delete this component?');">
+          <button type="submit" class="btn small danger">Del</button>
+        </form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7">No components yet. Register your first component above.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

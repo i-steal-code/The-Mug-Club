@@ -2,7 +2,7 @@
 
 Operations dashboard for inventory, orders, finance, tasks, and recipes.
 
-**Status: v0.2.2 (development).**
+**Status: v0.2.3 (development).**
 
 ## Stack
 
@@ -39,16 +39,31 @@ On first request that uses the database, the app applies `schema.sql` (if empty)
 
 If Postgres returns **`FATAL: Tenant or user not found`**, the pooler username is wrong: it must be **`postgres.<project-ref>`**, not plain `postgres`. Copy the pooler URI from Supabase without swapping in the direct-connection user.
 
-### Free tier: reducing cold starts
+### Free tier: reducing cold starts (v0.2.3 plan)
 
-Render free web services spin down after idle time. You cannot fully remove cold starts without a paid instance, but you can **shorten idle sleep** and **wake cheaply**:
+Render free web services spin down after idle time. You cannot fully remove cold starts without a paid instance, but you can **shorten idle sleep**, **wake cheaply**, and **diagnose** lingering slowness.
 
-1. Add an external monitor (e.g. UptimeRobot, Better Stack, or a cron job) that **GETs** `https://<your-service>.onrender.com/healthz` every **10–14 minutes**. That route returns plain `ok` and **does not connect to Postgres**, so it only keeps the HTTP worker warm.
-2. The **first real page hit** after a long sleep may still pay for DB connection + migrations on that worker; keep the app import light (this repo defers schema until first DB use).
+Two keep-warm endpoints (no auth, both send `Cache-Control: no-store`):
+
+- `GET /healthz` — returns plain `ok`, never opens Postgres. Keeps the Python web worker warm.
+- `GET /warm` — runs `SELECT 1` through the same connection path as real requests. Keeps the Postgres connection + libpq IPv4 resolution warm and prints `elapsed_ms` for timing.
+
+Recommended schedule (two monitors):
+
+1. **/healthz** every **10 min** (light, cheap). UptimeRobot / Better Stack / a cron — anything that does a plain HTTP GET.
+2. **/warm** every **15 min**. Because `/warm` talks to Postgres, it keeps Supabase from cold-starting the pooled connection that the first real page would otherwise pay for.
+
+Troubleshooting plan when pings appear to "not work":
+
+1. **Confirm the URL** — Render free services deploy to `https://<service>.onrender.com`. Open `/healthz` in your browser; you must see `ok`. If you see the dashboard / a redirect, the monitor may be hitting a different route.
+2. **Confirm the monitor fires** — in UptimeRobot, check "Response Times" and the latest log. If the check is stuck at 12h cadence because the free plan doesn't accept <5 min intervals, that's fine — 5–14 min is enough.
+3. **Watch Render logs in real time** — the first request after idle shows a ~30–60s spin-up line (`==> Your service is live`). A ping during that window does wake the service; subsequent pings keep it warm for the next 15 min window.
+4. **Check response times** — `/warm` prints `elapsed_ms`. A cold worker typically reports >500 ms for the first hit; steady state is <100 ms. If `/warm` stays >500 ms consistently, the slow path is the database, not Python.
+5. **Last resort** — Render's free web tier still has an **inactivity timeout** independent of request traffic on some account tiers. Upgrade the service to the paid tier if sub-second first-paint is a hard requirement.
 
 ## One-time data load (manual SQL-first)
 
-For `v0.2.2`, the import flow is SQL-first (Supabase SQL editor), plus an in-app financial tracker importer:
+The import flow is SQL-first (Supabase SQL editor), plus an in-app financial tracker importer:
 
 1. Manually normalize names in your CSVs first (for example: `heavy cream` vs `whipping cream`, `honey buttercream` naming).
 2. Open `database import/supabase_manual_insert.sql`.
@@ -56,20 +71,28 @@ For `v0.2.2`, the import flow is SQL-first (Supabase SQL editor), plus an in-app
 
 This keeps ingestion simple and transparent with no extra runtime dependency/debug loop.
 
-### Financial tracker import
+### Financial tracker import (1NF in v0.2.3)
 
 Use **Finance → Import financial tracker CSV** to ingest
 `database import/3_The Mug Club_Financials - Financial Tracker.csv`.
-The importer separates cash inflow / outflow side-by-side tables, skips non-standard header/preamble rows, and cleans dates/amounts before insertion.
+The importer:
 
-## Structured ordering model
+- separates the cash inflow / outflow side-by-side tables in the raw sheet,
+- skips non-standard header / preamble rows,
+- cleans dates and amounts,
+- **splits each inflow description into 1NF rows** — one per singular product bought — pulling out `customer_name`, `product_name`, and splitting `amount` evenly across the listed cups,
+- infers `payment_type` (`paynow` / `cash`) from the "Person In Charge" column,
+- tags all imported rows with `payment_status = 'paid'` since they're historical.
 
-- Orders are now product-based via `products` + `order_items` tables (not free-text order blobs).
-- Customer and employee order forms use fixed dropdown selections for products.
-- Product naming conventions and flavour dropdown options are editable in-app at **Products + Recipes**.
-- Products and recipes are merged: each product can own one recipe card and computed margin estimate.
-- Recipe cards now support component-level prep checklist, component steps, and final assembly steps with remarks.
-- Shop page supports multi-line interactive cart, placeholder product images, and PayNow QR placeholder block.
+## Structured ordering + recipe model (v0.2.3)
+
+- **Recipe databank** (`/products`) is a gallery of product cards; clicking opens the recipe detail.
+- **Components** (`/components`) are reusable building blocks (matcha cloud, buttercream, syrups). Each has its own ingredient list and step list.
+- **Product recipe ingredients** can reference either an inventory item or a component — components act as a "bundled" ingredient for flavour work.
+- Orders are stored via `products` + `order_items` (3NF operational), and are promoted into the 1NF **`finance_cash_inflows`** sheet automatically when both status = **Completed** and payment = **Paid**.
+- On the orders page, status + payment are **morphing buttons** — click to advance to the next state. Completed + paid rows drop off the list (they now live in finance).
+- Shop page uses a **product-card picker** (no separate menu below) with a per-line special-request input, and shows a PayNow footnote noting that orders are only processed after payment verification.
+- Staff / team page replaces the old "Members" label and hides internal employee IDs.
 
 Each dashboard list page links to **Export CSV** for relevant tables.
 

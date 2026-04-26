@@ -67,18 +67,19 @@ CREATE TABLE IF NOT EXISTS margin_menu_items (
 
 -- Orders (Google Form / manual ops) — before finance inflows (FK) ----------
 CREATE TABLE IF NOT EXISTS orders (
-    id               SERIAL PRIMARY KEY,
-    customer_name    TEXT NOT NULL,
-    cup_count        INTEGER NOT NULL DEFAULT 1,
-    total_amount     DOUBLE PRECISION,
-    order_date       DATE,
-    payment_notes    TEXT,
-    payment_method   TEXT,
-    order_status     TEXT NOT NULL DEFAULT 'Pending'
+    id                SERIAL PRIMARY KEY,
+    customer_name     TEXT NOT NULL,
+    cup_count         INTEGER NOT NULL DEFAULT 1,
+    total_amount      DOUBLE PRECISION,
+    order_date        DATE,
+    payment_notes     TEXT,
+    payment_method    TEXT,
+    order_status      TEXT NOT NULL DEFAULT 'Pending'
         CHECK (order_status IN ('Pending', 'Processing', 'Completed', 'Cancelled')),
-    payment_status   TEXT NOT NULL DEFAULT 'Unpaid'
+    payment_status    TEXT NOT NULL DEFAULT 'Unpaid'
         CHECK (payment_status IN ('Unpaid', 'Paid', 'Refunded')),
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    finance_pushed_at TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS products (
@@ -105,7 +106,7 @@ CREATE TABLE IF NOT EXISTS order_items (
     remarks       TEXT
 );
 
--- Financial tracker — cash inflows (revenue / order-like rows) --------------
+-- Financial tracker — cash inflows (1NF: one row per singular product sold) -
 CREATE TABLE IF NOT EXISTS finance_cash_inflows (
     id                 SERIAL PRIMARY KEY,
     source_txn_number  INTEGER,
@@ -115,7 +116,10 @@ CREATE TABLE IF NOT EXISTS finance_cash_inflows (
     txn_date           DATE,
     screenshot         TEXT,
     person_in_charge   TEXT,
-    linked_order_id    INTEGER REFERENCES orders(id) ON DELETE SET NULL
+    customer_name      TEXT,
+    product_name       TEXT,
+    payment_type       TEXT CHECK (payment_type IS NULL OR payment_type IN ('paynow', 'cash')),
+    payment_status     TEXT CHECK (payment_status IS NULL OR payment_status IN ('paid', 'unpaid'))
 );
 
 -- Financial tracker — cash outflows (expenses) ------------------------------
@@ -154,11 +158,39 @@ CREATE TABLE IF NOT EXISTS recipe_steps (
     completed   BOOLEAN NOT NULL DEFAULT FALSE
 );
 
+-- Standalone reusable components (e.g. "Matcha cloud", "Buttercream") --------
+CREATE TABLE IF NOT EXISTS components (
+    id              SERIAL PRIMARY KEY,
+    name            TEXT NOT NULL UNIQUE,
+    component_type  TEXT,
+    notes           TEXT,
+    base_yield      DOUBLE PRECISION NOT NULL DEFAULT 1,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS component_ingredients (
+    id                 SERIAL PRIMARY KEY,
+    component_id       INTEGER NOT NULL REFERENCES components(id) ON DELETE CASCADE,
+    inventory_item_id  INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL,
+    label_override     TEXT,
+    qty_g              DOUBLE PRECISION,
+    sort_order         INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS component_steps (
+    id            SERIAL PRIMARY KEY,
+    component_id  INTEGER NOT NULL REFERENCES components(id) ON DELETE CASCADE,
+    body          TEXT NOT NULL,
+    sort_order    INTEGER NOT NULL DEFAULT 0,
+    done          BOOLEAN NOT NULL DEFAULT FALSE
+);
+
 CREATE TABLE IF NOT EXISTS recipe_ingredients (
     id                   SERIAL PRIMARY KEY,
     recipe_id            INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
     sort_order           INTEGER NOT NULL DEFAULT 0,
     inventory_item_id    INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL,
+    component_id         INTEGER REFERENCES components(id) ON DELETE SET NULL,
     label_override       TEXT,
     qty_per_yield        DOUBLE PRECISION,
     unit                 TEXT NOT NULL DEFAULT 'g'
@@ -222,3 +254,6 @@ CREATE INDEX IF NOT EXISTS idx_recipe_components_recipe ON recipe_components(rec
 CREATE INDEX IF NOT EXISTS idx_recipe_prep_component ON recipe_component_prep(component_id);
 CREATE INDEX IF NOT EXISTS idx_recipe_steps_component ON recipe_component_steps(component_id);
 CREATE INDEX IF NOT EXISTS idx_recipe_assembly_recipe ON recipe_assembly_steps(recipe_id);
+CREATE INDEX IF NOT EXISTS idx_component_ingredients ON component_ingredients(component_id);
+CREATE INDEX IF NOT EXISTS idx_component_steps ON component_steps(component_id);
+CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_component ON recipe_ingredients(component_id);

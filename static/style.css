@@ -1,4 +1,4 @@
-/* The Mug Club dashboard — v0.2.0 palette */
+/* The Mug Club dashboard — v0.2.3 palette */
 :root {
   --primary-bg:   #eeede9;
   --secondary:    #415b42;
@@ -291,9 +291,122 @@ h2 { font-size: 20px; margin-top: 28px; color: var(--secondary-dark); }
 }
 .export-links a { font-size: 14px; }
 
+/* Morphing state buttons used on the orders page (v0.2.3).
+   Click advances to the next state; colour encodes current state. */
+.morph-btn {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  min-width: 98px;
+  text-align: center;
+  border-radius: 999px;
+  border-width: 1px;
+  border-style: solid;
+}
+.morph-btn:hover { filter: brightness(0.97); }
+.morph-btn.ord-pending     { background: #fef3c7; color: #92400e; border-color: #facc15; }
+.morph-btn.ord-processing  { background: #dbeafe; color: #1e40af; border-color: #60a5fa; }
+.morph-btn.ord-completed   { background: #dcfce7; color: #166534; border-color: #4ade80; }
+.morph-btn.ord-cancelled   { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+.morph-btn.pay-unpaid      { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
+.morph-btn.pay-paid        { background: #dcfce7; color: #166534; border-color: #4ade80; }
+.morph-btn.pay-refunded    { background: #e5e7eb; color: #374151; border-color: #9ca3af; }
+
+/* Product-card radio picker on the shop page (v0.2.3). Each radio becomes a
+   large tappable card; the standalone menu snapshot grid is gone. */
+.product-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.product-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  background: var(--card);
+  border: 2px solid var(--border-soft);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.1s ease, box-shadow 0.1s ease;
+  min-width: 0;
+}
+.product-card img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  background: var(--primary-bg);
+  border-radius: 8px;
+}
+.product-card strong { color: var(--secondary-dark); font-size: 15px; }
+.product-card .subtitle { font-size: 12px; }
+.product-card .price {
+  margin-top: auto;
+  font-weight: 700;
+  color: var(--secondary);
+}
+.product-card input[type="radio"] {
+  position: absolute;
+  top: 8px; right: 8px;
+  accent-color: var(--secondary);
+}
+.product-card:has(input[type="radio"]:checked) {
+  border-color: var(--secondary);
+  box-shadow: 0 0 0 3px rgba(65, 91, 66, 0.22);
+}
+
+/* Recipe databank top menu — grid of product entry points. */
+.recipe-menu {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
+  margin: 12px 0 24px;
+}
+.recipe-menu-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px;
+  background: var(--card);
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  text-decoration: none;
+  color: var(--text);
+  transition: transform 0.08s ease, box-shadow 0.08s ease, border-color 0.08s ease;
+}
+.recipe-menu-card:hover {
+  border-color: var(--secondary);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(30, 42, 31, 0.07);
+}
+.recipe-menu-card img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  background: var(--primary-bg);
+  border-radius: 8px;
+}
+.recipe-menu-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.recipe-menu-body strong { color: var(--secondary-dark); }
+.recipe-menu-body .price { color: var(--secondary); font-weight: 700; margin-top: 2px; }
+
+/* Finance page — inflow + outflow side-by-side. */
+.finance-split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: 20px;
+  margin: 14px 0 24px;
+}
+.finance-pane { min-width: 0; }
+.finance-pane .data-table { font-size: 13px; }
+
 @media (max-width: 720px) {
   .nav a { font-size: 13px; }
   .topbar { padding: 10px 14px; flex-wrap: wrap; gap: 8px; }
   .data-table th, .data-table td { padding: 8px; font-size: 13px; }
   .stats { flex-direction: column; }
+  .product-picker { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  .recipe-menu { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .finance-split { grid-template-columns: 1fr; }
 }

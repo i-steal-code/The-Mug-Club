@@ -2,7 +2,7 @@
 {% block title %}Place an order (beta) · Mug Club{% endblock %}
 {% block content %}
 <h1>Order drinks <span class="pill warning">beta</span></h1>
-<p class="subtitle">Interactive order list with product cards, pricing, and cart total before payment.</p>
+<p class="subtitle">Pick from the product cards for each line, then choose your payment option.</p>
 
 <form method="post" action="{{ url_for('shop_order_submit') }}" class="form-card">
   <label>Your name <span class="req">*</span>
@@ -11,56 +11,49 @@
 
   <h2>Build your order</h2>
   <div id="shop-lines">
-    <div class="row shop-line">
-      <label>Product
-        <select name="product_id" required>
-          <option value="">Choose an item</option>
-          {% for p in products %}
-            <option value="{{ p.id }}" data-price="{{ p.selling_price or '' }}">{{ p.product_name }}{% if p.selling_price is not none %} (${{ '%.2f' % p.selling_price }}){% endif %}</option>
-          {% endfor %}
-        </select>
-      </label>
-      <label>Qty
-        <input type="number" name="quantity" min="1" value="1" required>
-      </label>
-      <div class="info-card" style="min-width:180px;">
-        <strong>Preview</strong>
-        <p class="subtitle line-total">$0.00</p>
+    <div class="shop-line">
+      <div class="product-picker">
+        {% for p in products %}
+        <label class="product-card">
+          <input type="radio" name="product_id" value="{{ p.id }}" data-price="{{ p.selling_price or '' }}" required>
+          <img src="{{ p.image_url or '/static/cup-placeholder.svg' }}" alt="{{ p.product_name }}">
+          <strong>{{ p.product_name }}</strong>
+          <span class="subtitle">{{ p.short_desc or 'Freshly made to order.' }}</span>
+          <span class="price">{% if p.selling_price is not none %}${{ '%.2f' % p.selling_price }}{% else %}Price TBC{% endif %}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <div class="row">
+        <label>Qty
+          <input type="number" name="quantity" min="1" value="1" required>
+        </label>
+        <label>Special request / remark for this product
+          <input type="text" name="line_remarks" maxlength="280" placeholder="e.g. less ice, extra shot">
+        </label>
+        <div class="info-card" style="min-width:180px;">
+          <strong>Line total</strong>
+          <p class="subtitle line-total">$0.00</p>
+        </div>
       </div>
     </div>
   </div>
   <div class="form-actions">
     <button class="btn ghost" id="add-line-btn" type="button">+ Add another product</button>
   </div>
-  <label>Special request / remarks
-    <input type="text" name="special_request" maxlength="300" placeholder="e.g. less sweet">
-  </label>
 
   <div class="stats">
     <div class="summary-card">
       <h3>Estimated total</h3>
       <p class="big" id="cart-total">$0.00</p>
-      <small>Calculated from selected product prices.</small>
+      <small>Calculated live from selected product prices.</small>
     </div>
-  </div>
-
-  <h2>Menu snapshots</h2>
-  <div class="stats">
-    {% for p in products %}
-    <div class="stat-card" style="min-width:240px;">
-      <img src="{{ p.image_url or '/static/cup-placeholder.svg' }}" alt="{{ p.product_name }}" style="width:100%;max-height:140px;object-fit:contain;background:#fff;border:1px solid var(--border-soft);border-radius:8px;">
-      <h3 style="margin-top:10px;">{{ p.product_name }}</h3>
-      <p class="subtitle">{{ p.short_desc or 'Freshly made to order.' }}</p>
-      <p><strong>{% if p.selling_price is not none %}${{ '%.2f' % p.selling_price }}{% else %}Price TBC{% endif %}</strong></p>
-    </div>
-    {% endfor %}
   </div>
 
   <fieldset class="form-card" style="margin-top: 20px;">
     <legend>Payment <small class="muted">choose one</small></legend>
     {% for value, label in payment_methods %}
     <label style="flex-direction: row; align-items: center; gap: 10px;">
-      <input type="radio" name="payment_method" value="{{ value }}" required>
+      <input type="radio" name="payment_method" value="{{ value }}" required data-payment="{{ value }}">
       {{ label }}
     </label>
     {% endfor %}
@@ -68,6 +61,10 @@
       <h3>PayNow</h3>
       <img src="/static/paynow-qr-placeholder.svg" alt="PayNow QR placeholder" style="width:180px;max-width:100%;background:#fff;border:1px solid var(--border-soft);border-radius:8px;">
       <p class="subtitle">Mobile number: <strong>+65 9000 1234</strong></p>
+      <p id="paynow-footnote" class="subtitle" style="display:none;">
+        <strong>Note:</strong> PayNow orders are only processed after payment has been verified. Please
+        complete payment and keep the screenshot ready for follow-up.
+      </p>
     </div>
   </fieldset>
 
@@ -80,13 +77,33 @@
   const linesRoot = document.getElementById("shop-lines");
   const addBtn = document.getElementById("add-line-btn");
   const totalEl = document.getElementById("cart-total");
+  const paynoteEl = document.getElementById("paynow-footnote");
   if (!linesRoot || !addBtn || !totalEl) return;
 
-  const lineTemplate = () => {
+  // Keep every line's product radios in their own radio group so a pick in one
+  // line never dislodges the pick in another. On submit they all get renamed
+  // back to `product_id` so the server can read them as a parallel list.
+  const scopeLineRadios = (line, idx) => {
+    line.querySelectorAll("input[type='radio'][data-payment]").forEach(() => {});
+    line.querySelectorAll("input[type='radio']").forEach((el) => {
+      if (!el.dataset.payment) {
+        el.name = "product_id_" + idx;
+      }
+    });
+  };
+
+  const restampAllLines = () => {
+    linesRoot.querySelectorAll(".shop-line").forEach((line, i) => scopeLineRadios(line, i + 1));
+  };
+
+  const cloneLine = () => {
     const src = linesRoot.querySelector(".shop-line");
     const clone = src.cloneNode(true);
-    clone.querySelector("select[name='product_id']").value = "";
-    clone.querySelector("input[name='quantity']").value = "1";
+    clone.querySelectorAll("input[type='radio']").forEach((el) => { el.checked = false; });
+    const qty = clone.querySelector("input[name='quantity']");
+    if (qty) qty.value = "1";
+    const remark = clone.querySelector("input[name='line_remarks']");
+    if (remark) remark.value = "";
     clone.querySelector(".line-total").textContent = "$0.00";
     return clone;
   };
@@ -94,9 +111,9 @@
   const recalc = () => {
     let grand = 0;
     linesRoot.querySelectorAll(".shop-line").forEach((line) => {
-      const sel = line.querySelector("select[name='product_id']");
+      const checked = line.querySelector("input[type='radio']:checked");
       const qty = Number(line.querySelector("input[name='quantity']").value || "0");
-      const price = Number((sel.selectedOptions[0]?.dataset?.price || "0"));
+      const price = Number((checked?.dataset?.price || "0"));
       const lineTotal = price * Math.max(0, qty);
       grand += lineTotal;
       line.querySelector(".line-total").textContent = "$" + lineTotal.toFixed(2);
@@ -105,12 +122,29 @@
   };
 
   addBtn.addEventListener("click", () => {
-    linesRoot.appendChild(lineTemplate());
+    linesRoot.appendChild(cloneLine());
+    restampAllLines();
     recalc();
   });
   linesRoot.addEventListener("change", recalc);
   linesRoot.addEventListener("input", recalc);
+  restampAllLines();
   recalc();
+
+  document.querySelectorAll("input[name='payment_method']").forEach((el) => {
+    el.addEventListener("change", () => {
+      if (paynoteEl) {
+        paynoteEl.style.display = el.checked && el.dataset.payment === "paynow" ? "" : "none";
+      }
+    });
+  });
+
+  const form = linesRoot.closest("form");
+  form.addEventListener("submit", () => {
+    form.querySelectorAll("input[type='radio']").forEach((el) => {
+      if (el.name && el.name.startsWith("product_id_")) el.name = "product_id";
+    });
+  });
 })();
 </script>
 {% endblock %}

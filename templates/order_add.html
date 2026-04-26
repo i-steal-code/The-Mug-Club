@@ -2,45 +2,61 @@
 {% block title %}Add order · Mug Club{% endblock %}
 {% block content %}
 <h1>Add order</h1>
+<p class="subtitle">Staff-entered orders. For customer-submitted orders, use the <a href="{{ url_for('shop_order_form') }}">shop form</a>.</p>
 
-<form method="post" class="form-card">
+<form method="post" class="form-card" id="order-add-form">
   <label>Customer name <span class="req">*</span>
     <input type="text" name="customer_name" required maxlength="120">
   </label>
 
   <div class="row">
     <label>Product <span class="req">*</span>
-      <select name="product_id" required>
+      <select name="product_id" id="order-product" required>
         <option value="">Select a product</option>
         {% for p in products %}
-          <option value="{{ p.id }}">{{ p.product_name }}</option>
+          <option value="{{ p.id }}" data-price="{{ p.selling_price or '' }}">
+            {{ p.product_name }}{% if p.selling_price is not none %} — ${{ '%.2f' % p.selling_price }}{% endif %}
+          </option>
         {% endfor %}
       </select>
     </label>
     <label>Quantity (cups)
-      <input type="number" name="quantity" min="1" value="1" required>
+      <input type="number" name="quantity" id="order-qty" min="1" value="1" required>
     </label>
-    <label>Unit price ($, optional)
-      <input type="text" name="unit_price" placeholder="e.g. 4.00">
+    <label>Unit price ($, optional — overrides catalogue)
+      <input type="text" name="unit_price" id="order-unit-price" placeholder="auto-fill from catalogue">
     </label>
     <label>Order date
       <input type="text" name="order_date" placeholder="DD/MM/YYYY or YYYY-MM-DD">
     </label>
   </div>
 
+  <div class="info-card" style="margin-top: 4px;">
+    <strong>Live preview</strong>
+    <p class="subtitle" style="margin: 4px 0 0;">
+      Line total: <strong id="order-line-total">$0.00</strong>
+    </p>
+    <p class="subtitle" style="margin: 0;">
+      Grand total (this order): <strong id="order-grand-total">$0.00</strong>
+    </p>
+  </div>
+
   <label>Item remarks / special request
-    <input type="text" name="line_remarks" maxlength="500" placeholder="Only free text field for order content">
+    <input type="text" name="line_remarks" maxlength="500" placeholder="e.g. less ice, collect 4pm">
   </label>
 
   <label>Payment notes
-    <input type="text" name="payment_notes" maxlength="500" placeholder="PayLah, PayNow, etc.">
-  </label>
-
-  <label>Payment method code (optional, for exports)
-    <input type="text" name="payment_method" maxlength="80" placeholder="e.g. paynow_qr, cash_collection">
+    <input type="text" name="payment_notes" maxlength="500" placeholder="free-text reference notes">
   </label>
 
   <div class="row">
+    <label>Payment method
+      <select name="payment_method">
+        <option value="">— choose —</option>
+        <option value="paynow">paynow</option>
+        <option value="cash">cash</option>
+      </select>
+    </label>
     <label>Order status
       <select name="order_status">
         {% for s in order_statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
@@ -58,4 +74,35 @@
     <a class="btn ghost" href="{{ url_for('orders_list') }}">Cancel</a>
   </div>
 </form>
+
+<script>
+(() => {
+  const sel = document.getElementById("order-product");
+  const qtyEl = document.getElementById("order-qty");
+  const priceEl = document.getElementById("order-unit-price");
+  const lineEl = document.getElementById("order-line-total");
+  const grandEl = document.getElementById("order-grand-total");
+  if (!sel || !qtyEl || !lineEl || !grandEl) return;
+
+  const money = (n) => "$" + (Number.isFinite(n) ? n : 0).toFixed(2);
+
+  const recalc = () => {
+    const opt = sel.selectedOptions[0];
+    const catPrice = Number(opt?.dataset?.price || "0");
+    const override = priceEl.value.trim();
+    const unit = override ? Number(override.replace(/[$,]/g, "")) : catPrice;
+    const qty = Math.max(0, Number(qtyEl.value || "0"));
+    const line = unit * qty;
+    lineEl.textContent = money(line);
+    grandEl.textContent = money(line);
+  };
+
+  ["change", "input"].forEach((ev) => {
+    sel.addEventListener(ev, recalc);
+    qtyEl.addEventListener(ev, recalc);
+    priceEl.addEventListener(ev, recalc);
+  });
+  recalc();
+})();
+</script>
 {% endblock %}

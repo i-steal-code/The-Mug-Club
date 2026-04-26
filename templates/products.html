@@ -1,21 +1,40 @@
 {% extends "base.html" %}
-{% block title %}Products + Recipes · Mug Club{% endblock %}
+{% block title %}Recipe databank · Mug Club{% endblock %}
 {% block content %}
 <div class="page-header">
-  <h1>Products + recipes</h1>
+  <h1>Recipe databank</h1>
   <div class="header-actions">
+    <a class="btn ghost" href="{{ url_for('components_page') }}">Manage components →</a>
     <a class="btn ghost" href="{{ url_for('export_table', name='products') }}">Export products CSV</a>
     <a class="btn ghost" href="{{ url_for('export_table', name='order_items') }}">Export order items CSV</a>
     <a class="btn ghost" href="{{ url_for('export_table', name='recipes') }}">Export recipes CSV</a>
   </div>
 </div>
 <p class="subtitle">
-  Products are now created together with recipes and share one ID lineage. Margins are estimated from per-serving recipe ingredients and inventory source cost.
+  Click any product below to open its recipe card. Recipes live here; the reusable building blocks
+  (matcha cloud, buttercream, syrups) live under <a href="{{ url_for('components_page') }}">Components</a>.
 </p>
 
+<section class="recipe-menu">
+  {% for p in products %}
+    {% if p.is_active %}
+    <a class="recipe-menu-card" href="{% if p.recipe_id %}{{ url_for('recipe_detail', recipe_id=p.recipe_id) }}{% else %}#{% endif %}">
+      <img src="{{ p.image_url or '/static/cup-placeholder.svg' }}" alt="{{ p.product_name }}">
+      <div class="recipe-menu-body">
+        <strong>{{ p.product_name }}</strong>
+        <span class="subtitle">{{ p.product_type }}{% if p.cloud_type %} · {{ p.cloud_type }}{% endif %}{% if p.flavour_name %} · {{ p.flavour_name }}{% endif %}</span>
+        <span class="price">{% if p.selling_price is not none %}${{ '%.2f' % p.selling_price }}{% else %}price TBC{% endif %}</span>
+      </div>
+    </a>
+    {% endif %}
+  {% else %}
+    <p class="subtitle">No active products yet. Create one below.</p>
+  {% endfor %}
+</section>
+
+<h2>Create product + recipe card</h2>
 <form method="post" class="form-card">
   <input type="hidden" name="action" value="save_product">
-  <h2>Create product + recipe card</h2>
   <div class="row">
     <label>Product name <span class="req">*</span>
       <input type="text" name="product_name" required maxlength="120" placeholder="e.g. Matcha Strawberry Latte">
@@ -55,7 +74,7 @@
     </label>
   </div>
   <label>Short description
-    <input type="text" name="short_desc" maxlength="280" placeholder="Shown on shop page product selector">
+    <input type="text" name="short_desc" maxlength="280" placeholder="Shown on shop picker + databank card">
   </label>
   <label>Recipe card notes
     <textarea name="notes" rows="2" placeholder="Remarks for this recipe card"></textarea>
@@ -83,6 +102,8 @@
   <div class="form-actions"><button class="btn" type="submit">Add flavour</button></div>
 </form>
 
+<h2>All products (editable)</h2>
+<p class="subtitle">Edit names, types, and prices here. Margin = selling price − computed ingredient cost/cup.</p>
 <table class="data-table">
   <thead>
     <tr>
@@ -145,6 +166,24 @@
     </tr>
   {% else %}
     <tr><td colspan="10">No products yet. Create your first product + recipe card above.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Components in the shelf</h2>
+<p class="subtitle">Reusable component recipes that product cards can reference as ingredients.</p>
+<table class="data-table">
+  <thead><tr><th>Name</th><th>Type</th><th>Notes</th><th></th></tr></thead>
+  <tbody>
+  {% for c in components %}
+    <tr>
+      <td><strong>{{ c.name }}</strong></td>
+      <td>{{ c.component_type or '—' }}</td>
+      <td class="desc">{{ c.notes or '—' }}</td>
+      <td><a class="btn small ghost" href="{{ url_for('component_detail', component_id=c.id) }}">Open</a></td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4">No components yet. <a href="{{ url_for('components_page') }}">Create one →</a></td></tr>
   {% endfor %}
   </tbody>
 </table>

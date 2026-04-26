@@ -40,8 +40,8 @@
   <thead>
     <tr>
       <th>Ingredient</th>
+      <th>Source</th>
       <th>Qty (scaled)</th>
-      <th>Inventory match</th>
       <th>Stock (g)</th>
       <th>Ready?</th>
     </tr>
@@ -49,12 +49,19 @@
   <tbody>
   {% for ing in ingredients %}
     <tr>
-      <td><strong>{{ ing.label_override or ing.inventory_item_name or '—' }}</strong></td>
+      <td><strong>{{ ing.display_name }}</strong></td>
+      <td class="desc">
+        {% if ing.source_kind == 'component' %}
+          <span class="pill">component</span> <a href="{{ url_for('component_detail', component_id=ing.component_id) }}">{{ ing.component_name }}</a>
+        {% elif ing.source_kind == 'inventory' %}
+          <span class="pill ok">inventory</span> {{ ing.inventory_item_name }}
+        {% else %}—{% endif %}
+      </td>
       <td>{% if ing.scaled_qty is not none %}{{ '%.2f' % ing.scaled_qty }} {{ ing.unit }}{% else %}—{% endif %}</td>
-      <td class="desc">{{ ing.inventory_item_name or '—' }}</td>
       <td>{% if ing.stock_qty_g is not none %}{{ ing.stock_qty_g }}{% else %}—{% endif %}</td>
       <td>
-        {% if ing.stock_qty_g is none and ing.inventory_item_name %}<span class="pill warning">No row</span>
+        {% if ing.source_kind == 'component' %}<span class="pill">component</span>
+        {% elif ing.stock_qty_g is none and ing.inventory_item_name %}<span class="pill warning">No row</span>
         {% elif ing.scaled_qty is none %}<span class="pill">n/a</span>
         {% elif ing.stock_ok %}<span class="pill ok">OK</span>
         {% else %}<span class="pill danger">Short</span>{% endif %}
@@ -64,7 +71,7 @@
   </tbody>
 </table>
 {% else %}
-<p class="subtitle">No ingredient lines yet. Add rows by selecting ingredients directly from inventory.</p>
+<p class="subtitle">No ingredient lines yet. Add a line by picking either an inventory item or a reusable component.</p>
 {% endif %}
 
 <h3>Add ingredient line</h3>
@@ -72,11 +79,25 @@
   <input type="hidden" name="action" value="add_ingredient">
   {% if preserve_desired_cups %}<input type="hidden" name="desired_cups" value="{{ preserve_desired_cups }}">{% endif %}
   <div class="row">
-    <label>Inventory ingredient <span class="req">*</span>
-      <select name="inventory_item_id" required>
+    <label>Source
+      <select name="source" id="ing-source">
+        <option value="inventory">inventory item</option>
+        <option value="component">component</option>
+      </select>
+    </label>
+    <label data-source-block="inventory">Inventory ingredient
+      <select name="inventory_item_id">
         <option value="">Select inventory item</option>
         {% for it in inventory_items %}
           <option value="{{ it.id }}">{{ it.item_name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label data-source-block="component" style="display:none;">Component
+      <select name="component_id">
+        <option value="">Select component</option>
+        {% for c in components_lookup %}
+          <option value="{{ c.id }}">{{ c.name }}{% if c.component_type %} · {{ c.component_type }}{% endif %}</option>
         {% endfor %}
       </select>
     </label>
@@ -88,12 +109,25 @@
     </label>
   </div>
   <label>Label override (optional, for naming tweaks)
-    <input type="text" name="label_override" maxlength="200" placeholder="leave blank to use inventory item name">
+    <input type="text" name="label_override" maxlength="200" placeholder="leave blank to use ingredient / component name">
   </label>
   <div class="form-actions">
     <button class="btn primary" type="submit">Add line</button>
   </div>
 </form>
+<script>
+(() => {
+  const sel = document.getElementById("ing-source");
+  if (!sel) return;
+  const toggle = () => {
+    document.querySelectorAll("[data-source-block]").forEach((el) => {
+      el.style.display = el.dataset.sourceBlock === sel.value ? "" : "none";
+    });
+  };
+  sel.addEventListener("change", toggle);
+  toggle();
+})();
+</script>
 
 <h2>Component list</h2>
 {% if components %}

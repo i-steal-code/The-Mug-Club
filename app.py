@@ -1,7 +1,7 @@
 """
 The Mug Club — operations dashboard (Flask + PostgreSQL / Supabase).
 Deploy: Render Web Service + Supabase Postgres (DATABASE_URL).
-v0.2.1 — SQL-first data load, structured products/orders, inventory source fields, prep on dashboard.
+v0.2.3 — components rework, 1NF finance, morphing order buttons, recipe databank, anti-cold-start hooks.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import os
 import re
 import socket
 import threading
+import time
 from datetime import date, datetime
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -34,11 +35,16 @@ TASK_STATUSES = ["Not Started", "In Progress", "Completed"]
 TASK_PRIORITIES = ["Low", "Medium", "High"]
 ORDER_STATUSES = ["Pending", "Processing", "Completed", "Cancelled"]
 PAYMENT_STATUSES = ["Unpaid", "Paid", "Refunded"]
+# Morphing button cycles for the orders page (v0.2.3).
+# Cancelled is still valid for imports / manual rollback but lives outside the cycle.
+ORDER_STATUS_CYCLE = ["Pending", "Processing", "Completed"]
+PAYMENT_STATUS_CYCLE = ["Unpaid", "Paid"]
 CLOUD_TYPES = ("coffee", "matcha")
-# Customer-facing payment choice (stored on orders.payment_method)
+# Customer-facing payment choice — simplified to two canonical values shared
+# with the finance 1NF sheet so orders flow in without translation.
 CUSTOMER_PAYMENT_METHODS = (
-    ("paynow_qr", "PayNow (scan QR)"),
-    ("cash_collection", "Cash / in person at collection"),
+    ("paynow", "PayNow (scan QR)"),
+    ("cash", "Cash / in person at collection"),
 )
 PRODUCT_TYPES = ("latte", "special")
 
@@ -364,6 +370,74 @@ _SCHEMA_MIGRATION_DDL = [
     "CREATE INDEX IF NOT EXISTS idx_recipe_prep_component ON recipe_component_prep(component_id)",
     "CREATE INDEX IF NOT EXISTS idx_recipe_steps_component ON recipe_component_steps(component_id)",
     "CREATE INDEX IF NOT EXISTS idx_recipe_assembly_recipe ON recipe_assembly_steps(recipe_id)",
+    # v0.2.3 — standalone reusable components (shared across product recipes).
+    """
+    CREATE TABLE IF NOT EXISTS components (
+        id             SERIAL PRIMARY KEY,
+        name           TEXT NOT NULL UNIQUE,
+        component_type TEXT,
+        notes          TEXT,
+        base_yield     DOUBLE PRECISION NOT NULL DEFAULT 1,
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS component_ingredients (
+        id                SERIAL PRIMARY KEY,
+        component_id      INTEGER NOT NULL REFERENCES components(id) ON DELETE CASCADE,
+        inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE SET NULL,
+        label_override    TEXT,
+        qty_g             DOUBLE PRECISION,
+        sort_order        INTEGER NOT NULL DEFAULT 0
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS component_steps (
+        id           SERIAL PRIMARY KEY,
+        component_id INTEGER NOT NULL REFERENCES components(id) ON DELETE CASCADE,
+        body         TEXT NOT NULL,
+        sort_order   INTEGER NOT NULL DEFAULT 0,
+        done         BOOLEAN NOT NULL DEFAULT FALSE
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_component_ingredients ON component_ingredients(component_id)",
+    "CREATE INDEX IF NOT EXISTS idx_component_steps ON component_steps(component_id)",
+    # A product recipe ingredient can now reference a reusable component
+    # instead of a raw inventory item (flavour components etc.).
+    "ALTER TABLE recipe_ingredients ADD COLUMN IF NOT EXISTS component_id INTEGER",
+    """
+    DO $$ BEGIN
+      ALTER TABLE recipe_ingredients
+        ADD CONSTRAINT recipe_ingredients_component_id_fkey
+        FOREIGN KEY (component_id) REFERENCES components(id) ON DELETE SET NULL;
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_component ON recipe_ingredients(component_id)",
+    # Finance 1NF rework (v0.2.3): one row per singular product bought.
+    "ALTER TABLE finance_cash_inflows ADD COLUMN IF NOT EXISTS customer_name TEXT",
+    "ALTER TABLE finance_cash_inflows ADD COLUMN IF NOT EXISTS product_name TEXT",
+    "ALTER TABLE finance_cash_inflows ADD COLUMN IF NOT EXISTS payment_type TEXT",
+    "ALTER TABLE finance_cash_inflows ADD COLUMN IF NOT EXISTS payment_status TEXT",
+    """
+    DO $$ BEGIN
+      ALTER TABLE finance_cash_inflows
+        ADD CONSTRAINT finance_cash_inflows_payment_type_chk
+        CHECK (payment_type IS NULL OR payment_type IN ('paynow', 'cash'));
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$
+    """,
+    """
+    DO $$ BEGIN
+      ALTER TABLE finance_cash_inflows
+        ADD CONSTRAINT finance_cash_inflows_payment_status_chk
+        CHECK (payment_status IS NULL OR payment_status IN ('paid', 'unpaid'));
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$
+    """,
+    # Orders get a "finance_pushed_at" stamp so completion → 1NF finance insert
+    # only happens once, even if the buttons are re-clicked (idempotent).
+    "ALTER TABLE orders ADD COLUMN IF NOT EXISTS finance_pushed_at TIMESTAMPTZ",
 ]
 
 
@@ -442,7 +516,7 @@ def _ensure_schema_applied() -> None:
 
 @app.before_request
 def _require_database_url():
-    if DATABASE_URL or request.endpoint in ("static", "healthz"):
+    if DATABASE_URL or request.endpoint in ("static", "healthz", "warm"):
         return None
     return render_template("setup.html"), 503
 
@@ -455,6 +529,33 @@ def healthz():
     """
     return Response(
         "ok\n",
+        mimetype="text/plain",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@app.get("/warm")
+def warm():
+    """
+    DB-touching warm probe. Use in tandem with /healthz on a slower cadence
+    (e.g. every 15 min) so the first real page load is not paying for a cold
+    Postgres pool + schema migration on top of cold Python.
+    """
+    started = time.perf_counter()
+    try:
+        row = query("SELECT 1 AS ok", fetch=True, one=True)
+        ok = bool(row and row.get("ok") == 1)
+    except Exception as exc:  # noqa: BLE001
+        elapsed = (time.perf_counter() - started) * 1000
+        return Response(
+            f"warm_error elapsed_ms={elapsed:.0f} err={exc}\n",
+            mimetype="text/plain",
+            status=503,
+            headers={"Cache-Control": "no-store"},
+        )
+    elapsed = (time.perf_counter() - started) * 1000
+    return Response(
+        f"warm_ok={ok} elapsed_ms={elapsed:.0f}\n",
         mimetype="text/plain",
         headers={"Cache-Control": "no-store"},
     )
@@ -741,7 +842,62 @@ def import_margins_csv(stream, replace: bool = False) -> tuple[int, int]:
         conn.close()
 
 
+_ITEM_RX = re.compile(r"^\s*(\d+)\s+(.+?)\s*$")
+
+
+def _infer_payment_type(text: str) -> str | None:
+    """Read the old 'Person In Charge' column and infer paynow vs. cash."""
+    if not text:
+        return None
+    s = text.lower()
+    if "paynow" in s or "paylah" in s or "ocbc" in s:
+        return "paynow"
+    if "cash" in s:
+        return "cash"
+    return None
+
+
+def _split_inflow_line(description: str | None) -> tuple[str | None, list[tuple[int, str]]]:
+    """Parse a financial-tracker description into (customer, [(qty, product), ...]).
+
+    Handles patterns like::
+      "Xanthe: 1 Matcha Strawberry Latte, 1 Matcha Original Latte"
+      " Isabelle: 1 Matcha Strawberry Latte, 1 Matcha Honey Buttercream Latte"
+
+    Seed-capital / non-order rows (no colon) return (None, []).
+    """
+    if not description:
+        return None, []
+    if ":" not in description:
+        return None, []
+    customer, _, tail = description.partition(":")
+    customer = customer.strip() or None
+    items: list[tuple[int, str]] = []
+    # Comma splits items; strip parenthetical annotations on the product name.
+    for raw in tail.split(","):
+        piece = raw.strip()
+        if not piece:
+            continue
+        m = _ITEM_RX.match(piece)
+        if not m:
+            continue
+        qty = int(m.group(1))
+        name = m.group(2).strip()
+        # strip trailing parentheticals like "(less ice)" so the product key is clean
+        name = re.sub(r"\s*\([^)]*\)\s*$", "", name).strip()
+        if qty > 0 and name:
+            items.append((qty, name))
+    return customer, items
+
+
 def import_financial_csv(stream, replace: bool = False) -> tuple[int, int]:
+    """
+    Parse the raw Google-Sheets financial tracker CSV.
+
+    Inflow rows are exploded into **1NF**: one row per singular product bought.
+    Amount is split evenly across the listed cups so totals still sum correctly.
+    Outflows are kept as-is (one row per expense).
+    """
     text = io.TextIOWrapper(stream, encoding="utf-8", newline="")
     rows = list(csv.reader(text))
     start = None
@@ -760,10 +916,9 @@ def import_financial_csv(stream, replace: bool = False) -> tuple[int, int]:
         if not row or len(row) < 4:
             continue
 
-        def g(idx):
-            return (row[idx] if idx < len(row) else "") or ""
+        def g(idx, _row=row):
+            return (_row[idx] if idx < len(_row) else "") or ""
 
-        # skip subheader / totals rows / mostly empty rows
         marker = f"{g(2)} {g(3)} {g(4)}".strip().lower()
         if (
             marker.startswith("- amount")
@@ -780,7 +935,7 @@ def import_financial_csv(stream, replace: bool = False) -> tuple[int, int]:
         cups = parse_int(g(5))
         d_in = parse_date(g(6))
         shot_in = g(7).strip() or None
-        pic_in = g(8).strip() or None
+        person_in = g(8).strip() or None
 
         txn_out = parse_int(g(9))
         amt_out = parse_money(g(10))
@@ -790,7 +945,46 @@ def import_financial_csv(stream, replace: bool = False) -> tuple[int, int]:
         pic_out = g(14).strip() or None if len(row) > 14 else None
 
         if amt_in is not None:
-            inflows.append((txn_in, amt_in, desc_in, cups, d_in, shot_in, pic_in))
+            customer, items = _split_inflow_line(desc_in)
+            pay_type = _infer_payment_type(person_in or "")
+            if items:
+                total_qty = sum(q for q, _ in items) or 1
+                per_unit = float(amt_in) / total_qty if amt_in else 0.0
+                for qty, product_name in items:
+                    line_amt = round(per_unit * qty, 4)
+                    inflows.append(
+                        (
+                            txn_in,
+                            line_amt,
+                            desc_in,
+                            qty,
+                            d_in,
+                            shot_in,
+                            person_in,
+                            customer,
+                            product_name,
+                            pay_type,
+                            "paid",
+                        )
+                    )
+            else:
+                # Non-order rows (e.g. seed capital) kept as one row, no customer/product.
+                inflows.append(
+                    (
+                        txn_in,
+                        amt_in,
+                        desc_in,
+                        cups,
+                        d_in,
+                        shot_in,
+                        person_in,
+                        customer,
+                        None,
+                        pay_type,
+                        "paid",
+                    )
+                )
+
         if amt_out is not None:
             outflows.append((txn_out, amt_out, desc_out, d_out, shot_out, pic_out))
 
@@ -805,8 +999,10 @@ def import_financial_csv(stream, replace: bool = False) -> tuple[int, int]:
                     cur.execute(
                         """
                         INSERT INTO finance_cash_inflows
-                          (source_txn_number, amount, description, quantity_cups, txn_date, screenshot, person_in_charge)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s)
+                          (source_txn_number, amount, description, quantity_cups, txn_date,
+                           screenshot, person_in_charge, customer_name, product_name,
+                           payment_type, payment_status)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         """,
                         t,
                     )
@@ -1092,6 +1288,8 @@ def inventory_add():
 # ---------------------------------------------------------------------------
 @app.route("/orders")
 def orders_list():
+    # Hide orders that are both Completed and Paid — they've already flowed to
+    # finance (v0.2.3). Still queryable directly via the order's stored row.
     orders = query(
         """
         SELECT
@@ -1103,6 +1301,7 @@ def orders_list():
         FROM orders o
         LEFT JOIN order_items oi ON oi.order_id = o.id
         LEFT JOIN products p ON p.id = oi.product_id
+        WHERE NOT (o.order_status = 'Completed' AND o.payment_status = 'Paid')
         GROUP BY o.id
         ORDER BY COALESCE(o.order_date, o.created_at::date) DESC, o.id DESC
         """,
@@ -1171,6 +1370,82 @@ def orders_add():
     )
 
 
+def _cycle_next(current: str, cycle: list[str]) -> str:
+    """Return the next value in the cycle, wrapping around."""
+    if current not in cycle:
+        return cycle[0]
+    i = cycle.index(current)
+    return cycle[(i + 1) % len(cycle)]
+
+
+def _push_order_to_finance_if_done(order_id: int) -> None:
+    """
+    Once an order is both Completed and Paid, insert one 1NF row per order_item
+    into `finance_cash_inflows`. `orders.finance_pushed_at` gates the insert so
+    the buttons stay idempotent — toggling states repeatedly won't duplicate.
+    """
+    order = query(
+        "SELECT * FROM orders WHERE id = %s",
+        (order_id,),
+        fetch=True,
+        one=True,
+    )
+    if not order:
+        return
+    if order["order_status"] != "Completed" or order["payment_status"] != "Paid":
+        return
+    if order.get("finance_pushed_at") is not None:
+        return
+    items = query(
+        """
+        SELECT oi.quantity, oi.unit_price, p.product_name
+        FROM order_items oi
+        JOIN products p ON p.id = oi.product_id
+        WHERE oi.order_id = %s
+        ORDER BY oi.id
+        """,
+        (order_id,),
+        fetch=True,
+    ) or []
+    pay_type = (order.get("payment_method") or "").strip().lower()
+    if pay_type not in ("paynow", "cash"):
+        pay_type = None
+    conn = get_conn()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                for it in items:
+                    amt = (
+                        float(it["unit_price"]) * int(it["quantity"])
+                        if it.get("unit_price") is not None
+                        else None
+                    )
+                    cur.execute(
+                        """
+                        INSERT INTO finance_cash_inflows
+                          (amount, description, quantity_cups, txn_date,
+                           customer_name, product_name, payment_type, payment_status)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                        """,
+                        (
+                            amt,
+                            f"Order #{order_id}",
+                            int(it["quantity"]),
+                            order.get("order_date") or date.today(),
+                            order["customer_name"],
+                            it["product_name"],
+                            pay_type,
+                            "paid",
+                        ),
+                    )
+                cur.execute(
+                    "UPDATE orders SET finance_pushed_at = NOW() WHERE id = %s",
+                    (order_id,),
+                )
+    finally:
+        conn.close()
+
+
 @app.route("/orders/<int:order_id>/status", methods=["POST"])
 def orders_update_status(order_id):
     order_status = request.form.get("order_status")
@@ -1182,7 +1457,42 @@ def orders_update_status(order_id):
             "UPDATE orders SET payment_status = %s WHERE id = %s",
             (payment_status, order_id),
         )
+    _push_order_to_finance_if_done(order_id)
     flash("Order updated.", "success")
+    return redirect(url_for("orders_list"))
+
+
+@app.post("/orders/<int:order_id>/advance-status")
+def orders_advance_status(order_id):
+    """Morph the order_status button to the next state in the UX cycle."""
+    row = query(
+        "SELECT order_status FROM orders WHERE id = %s",
+        (order_id,),
+        fetch=True,
+        one=True,
+    )
+    if not row:
+        abort(404)
+    nxt = _cycle_next(row["order_status"], ORDER_STATUS_CYCLE)
+    query("UPDATE orders SET order_status = %s WHERE id = %s", (nxt, order_id))
+    _push_order_to_finance_if_done(order_id)
+    return redirect(url_for("orders_list"))
+
+
+@app.post("/orders/<int:order_id>/advance-payment")
+def orders_advance_payment(order_id):
+    """Morph the payment_status button to the next state in the UX cycle."""
+    row = query(
+        "SELECT payment_status FROM orders WHERE id = %s",
+        (order_id,),
+        fetch=True,
+        one=True,
+    )
+    if not row:
+        abort(404)
+    nxt = _cycle_next(row["payment_status"], PAYMENT_STATUS_CYCLE)
+    query("UPDATE orders SET payment_status = %s WHERE id = %s", (nxt, order_id))
+    _push_order_to_finance_if_done(order_id)
     return redirect(url_for("orders_list"))
 
 
@@ -1331,6 +1641,7 @@ def products_page():
         products=products or [],
         product_types=PRODUCT_TYPES,
         flavours=flavours or [],
+        components=list_components(),
     )
 
 
@@ -1349,10 +1660,9 @@ def finance_summary():
     )
     inflows = query(
         """
-        SELECT i.*, o.customer_name AS linked_customer_name
-        FROM finance_cash_inflows i
-        LEFT JOIN orders o ON o.id = i.linked_order_id
-        ORDER BY i.txn_date NULLS LAST, i.id
+        SELECT *
+        FROM finance_cash_inflows
+        ORDER BY txn_date NULLS LAST, id
         """,
         fetch=True,
     )
@@ -1370,15 +1680,6 @@ def finance_summary():
         fetch=True,
         one=True,
     )["s"]
-    recent_orders = query(
-        """
-        SELECT id, customer_name, order_date
-        FROM orders
-        ORDER BY COALESCE(order_date, created_at::date) DESC, id DESC
-        LIMIT 200
-        """,
-        fetch=True,
-    )
     product_margins = query(
         """
         SELECT
@@ -1405,7 +1706,6 @@ def finance_summary():
         total_revenue=float(rev or 0),
         total_expenses=float(exp or 0),
         net=float((rev or 0) - (exp or 0)),
-        recent_orders=recent_orders or [],
         product_margins=product_margins or [],
     )
 
@@ -1478,9 +1778,16 @@ def recipe_detail(recipe_id):
                 )
                 flash("Step added.", "success")
         elif action == "add_ingredient":
+            # Source of the line: inventory item OR reusable component (v0.2.3).
+            source = (request.form.get("source") or "inventory").strip()
             inventory_item_id = request.form.get("inventory_item_id", type=int)
+            component_id = request.form.get("component_id", type=int)
+            if source == "component":
+                inventory_item_id = None
+            else:
+                component_id = None
             label_override = request.form.get("label_override", "").strip() or None
-            if inventory_item_id:
+            if inventory_item_id or component_id:
                 qraw = (request.form.get("qty_per_yield") or "").strip()
                 try:
                     qty = float(qraw) if qraw else None
@@ -1499,10 +1806,10 @@ def recipe_detail(recipe_id):
                 query(
                     """
                     INSERT INTO recipe_ingredients
-                      (recipe_id, sort_order, inventory_item_id, label_override, qty_per_yield, unit)
-                    VALUES (%s,%s,%s,%s,%s,%s)
+                      (recipe_id, sort_order, inventory_item_id, component_id, label_override, qty_per_yield, unit)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s)
                     """,
-                    (recipe_id, so, inventory_item_id, label_override, qty, unit),
+                    (recipe_id, so, inventory_item_id, component_id, label_override, qty, unit),
                 )
                 flash("Ingredient line added.", "success")
         elif action == "set_yield":
@@ -1588,9 +1895,14 @@ def recipe_detail(recipe_id):
     )
     ingredients = query(
         """
-        SELECT ri.*, ii.item_name AS inventory_item_name, ii.qty_grams AS stock_qty_g
+        SELECT ri.*,
+               ii.item_name AS inventory_item_name,
+               ii.qty_grams AS stock_qty_g,
+               c.name       AS component_name,
+               c.component_type AS component_type
         FROM recipe_ingredients ri
         LEFT JOIN inventory_items ii ON ii.id = ri.inventory_item_id
+        LEFT JOIN components c ON c.id = ri.component_id
         WHERE ri.recipe_id = %s
         ORDER BY ri.sort_order, ri.id
         """,
@@ -1601,6 +1913,7 @@ def recipe_detail(recipe_id):
         "SELECT id, item_name FROM inventory_items ORDER BY item_name",
         fetch=True,
     )
+    components_lookup = list_components()
     components = query(
         "SELECT * FROM recipe_components WHERE recipe_id = %s ORDER BY sort_order, id",
         (recipe_id,),
@@ -1638,7 +1951,15 @@ def recipe_detail(recipe_id):
         row = dict(ing)
         qpy = ing.get("qty_per_yield")
         row["scaled_qty"] = (float(qpy) * factor) if qpy is not None else None
-        row["stock_item_name"] = ing.get("inventory_item_name")
+        row["display_name"] = (
+            ing.get("label_override")
+            or ing.get("component_name")
+            or ing.get("inventory_item_name")
+            or "—"
+        )
+        row["source_kind"] = (
+            "component" if ing.get("component_id") else ("inventory" if ing.get("inventory_item_id") else "free")
+        )
         row["stock_ok"] = bool(
             ing.get("stock_qty_g") is not None
             and row["scaled_qty"] is not None
@@ -1656,6 +1977,7 @@ def recipe_detail(recipe_id):
         preserve_desired_cups=dc_raw,
         inventory_items=inventory_items or [],
         components=components,
+        components_lookup=components_lookup,
         prep_rows=prep_rows,
         component_steps=component_steps,
         assembly_steps=assembly_steps,
@@ -1712,6 +2034,193 @@ def recipe_assembly_step_toggle(recipe_id, step_id):
     return redirect(url_for("recipe_detail", recipe_id=recipe_id))
 
 
+# ---------------------------------------------------------------------------
+# Standalone reusable components (v0.2.3)
+# ---------------------------------------------------------------------------
+def list_components():
+    return query(
+        "SELECT * FROM components ORDER BY component_type NULLS LAST, name",
+        fetch=True,
+    ) or []
+
+
+@app.route("/components", methods=["GET", "POST"])
+def components_page():
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        component_type = request.form.get("component_type", "").strip() or None
+        notes = request.form.get("notes", "").strip() or None
+        try:
+            base_yield = float(request.form.get("base_yield") or 1)
+        except ValueError:
+            base_yield = 1.0
+        if base_yield <= 0:
+            base_yield = 1.0
+        if not name:
+            flash("Component name is required.", "error")
+            return redirect(url_for("components_page"))
+        query(
+            """
+            INSERT INTO components (name, component_type, notes, base_yield)
+            VALUES (%s,%s,%s,%s)
+            ON CONFLICT (name) DO UPDATE
+            SET component_type = EXCLUDED.component_type,
+                notes = EXCLUDED.notes,
+                base_yield = EXCLUDED.base_yield
+            """,
+            (name, component_type, notes, base_yield),
+        )
+        flash("Component saved.", "success")
+        return redirect(url_for("components_page"))
+
+    rows = query(
+        """
+        SELECT c.*,
+               (SELECT COUNT(*)::int FROM component_ingredients ci WHERE ci.component_id = c.id) AS ingredient_count,
+               (SELECT COUNT(*)::int FROM component_steps cs WHERE cs.component_id = c.id) AS step_count
+        FROM components c
+        ORDER BY c.component_type NULLS LAST, c.name
+        """,
+        fetch=True,
+    ) or []
+    component_types = query(
+        "SELECT DISTINCT component_type FROM components WHERE component_type IS NOT NULL ORDER BY 1",
+        fetch=True,
+    ) or []
+    return render_template(
+        "components.html",
+        components=rows,
+        component_types=[r["component_type"] for r in component_types],
+    )
+
+
+@app.route("/components/<int:component_id>", methods=["GET", "POST"])
+def component_detail(component_id):
+    comp = query("SELECT * FROM components WHERE id = %s", (component_id,), fetch=True, one=True)
+    if not comp:
+        abort(404)
+    if request.method == "POST":
+        action = request.form.get("action")
+        if action == "save_meta":
+            name = request.form.get("name", "").strip()
+            ctype = request.form.get("component_type", "").strip() or None
+            notes = request.form.get("notes", "").strip() or None
+            try:
+                by = float(request.form.get("base_yield") or 1)
+            except ValueError:
+                by = 1.0
+            if not name:
+                flash("Component name is required.", "error")
+                return redirect(url_for("component_detail", component_id=component_id))
+            query(
+                """
+                UPDATE components SET name = %s, component_type = %s, notes = %s, base_yield = %s
+                WHERE id = %s
+                """,
+                (name, ctype, notes, by, component_id),
+            )
+            flash("Component details saved.", "success")
+        elif action == "add_ingredient":
+            inventory_item_id = request.form.get("inventory_item_id", type=int)
+            label_override = request.form.get("label_override", "").strip() or None
+            qraw = (request.form.get("qty_g") or "").strip()
+            try:
+                qty = float(qraw) if qraw else None
+            except ValueError:
+                qty = None
+            if inventory_item_id:
+                so = query(
+                    "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM component_ingredients WHERE component_id = %s",
+                    (component_id,),
+                    fetch=True,
+                    one=True,
+                )["n"]
+                query(
+                    """
+                    INSERT INTO component_ingredients
+                      (component_id, inventory_item_id, label_override, qty_g, sort_order)
+                    VALUES (%s,%s,%s,%s,%s)
+                    """,
+                    (component_id, inventory_item_id, label_override, qty, so),
+                )
+                flash("Ingredient added to component.", "success")
+        elif action == "delete_ingredient":
+            cid = request.form.get("ingredient_id", type=int)
+            if cid:
+                query(
+                    "DELETE FROM component_ingredients WHERE id = %s AND component_id = %s",
+                    (cid, component_id),
+                )
+                flash("Ingredient removed.", "success")
+        elif action == "add_step":
+            body = request.form.get("body", "").strip()
+            if body:
+                so = query(
+                    "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM component_steps WHERE component_id = %s",
+                    (component_id,),
+                    fetch=True,
+                    one=True,
+                )["n"]
+                query(
+                    "INSERT INTO component_steps (component_id, body, sort_order) VALUES (%s,%s,%s)",
+                    (component_id, body, so),
+                )
+                flash("Step added.", "success")
+        elif action == "delete_step":
+            sid = request.form.get("step_id", type=int)
+            if sid:
+                query(
+                    "DELETE FROM component_steps WHERE id = %s AND component_id = %s",
+                    (sid, component_id),
+                )
+                flash("Step removed.", "success")
+        return redirect(url_for("component_detail", component_id=component_id))
+
+    ingredients = query(
+        """
+        SELECT ci.*, ii.item_name AS inventory_item_name
+        FROM component_ingredients ci
+        LEFT JOIN inventory_items ii ON ii.id = ci.inventory_item_id
+        WHERE ci.component_id = %s
+        ORDER BY ci.sort_order, ci.id
+        """,
+        (component_id,),
+        fetch=True,
+    ) or []
+    steps = query(
+        "SELECT * FROM component_steps WHERE component_id = %s ORDER BY sort_order, id",
+        (component_id,),
+        fetch=True,
+    ) or []
+    inventory_items = query(
+        "SELECT id, item_name FROM inventory_items ORDER BY item_name",
+        fetch=True,
+    ) or []
+    return render_template(
+        "component_detail.html",
+        component=comp,
+        ingredients=ingredients,
+        steps=steps,
+        inventory_items=inventory_items,
+    )
+
+
+@app.post("/components/<int:component_id>/step/<int:step_id>/toggle")
+def component_step_toggle(component_id, step_id):
+    query(
+        "UPDATE component_steps SET done = NOT done WHERE id = %s AND component_id = %s",
+        (step_id, component_id),
+    )
+    return redirect(url_for("component_detail", component_id=component_id))
+
+
+@app.post("/components/<int:component_id>/delete")
+def component_delete(component_id):
+    query("DELETE FROM components WHERE id = %s", (component_id,))
+    flash("Component deleted.", "success")
+    return redirect(url_for("components_page"))
+
+
 @app.get("/shop")
 def shop_order_form():
     return render_template(
@@ -1726,42 +2235,43 @@ def shop_order_submit():
     customer = request.form.get("customer_name", "").strip()
     product_ids = request.form.getlist("product_id")
     quantities = request.form.getlist("quantity")
-    special_request = request.form.get("special_request", "").strip() or None
+    line_remarks = request.form.getlist("line_remarks")
     pm = request.form.get("payment_method") or ""
     valid = {x[0] for x in CUSTOMER_PAYMENT_METHODS}
     if not customer:
         flash("Please enter your name.", "error")
         return redirect(url_for("shop_order_form"))
-    lines: list[tuple[int, int]] = []
+    lines: list[tuple[int, int, str | None]] = []
     for i, raw_pid in enumerate(product_ids):
         pid = parse_int(raw_pid)
         qty = parse_int(quantities[i] if i < len(quantities) else "1") or 0
+        remark = (line_remarks[i] if i < len(line_remarks) else "") or ""
+        remark = remark.strip() or None
         if pid and qty > 0:
-            lines.append((pid, qty))
+            lines.append((pid, qty, remark))
     if not lines:
         flash("Please add at least one product line.", "error")
         return redirect(url_for("shop_order_form"))
     if pm not in valid:
         flash("Choose a payment option.", "error")
         return redirect(url_for("shop_order_form"))
-    note_bits = [f"customer_portal:{pm}"]
-    if pm == "paynow_qr":
-        note_bits.append("PayNow via QR — customer pays to listed mobile number.")
-    else:
-        note_bits.append("Pay on collection (cash / in person).")
-    notes = " · ".join(note_bits)
+    notes = (
+        "PayNow — order processed after payment is verified."
+        if pm == "paynow"
+        else "Pay on collection (cash / in person)."
+    )
     products = {
         r["id"]: r
         for r in query(
             "SELECT id, product_name, selling_price FROM products WHERE id = ANY(%s)",
-            ([pid for pid, _ in lines],),
+            ([pid for pid, _, _ in lines],),
             fetch=True,
         )
     }
     total_amount = 0.0
     total_cups = 0
-    line_data: list[tuple[int, int, float | None]] = []
-    for pid, qty in lines:
+    line_data: list[tuple[int, int, float | None, str | None]] = []
+    for pid, qty, remark in lines:
         p = products.get(pid)
         if not p:
             continue
@@ -1769,7 +2279,7 @@ def shop_order_submit():
         total_cups += qty
         if unit_price is not None:
             total_amount += unit_price * qty
-        line_data.append((pid, qty, unit_price))
+        line_data.append((pid, qty, unit_price, remark))
     if not line_data:
         flash("No valid products selected.", "error")
         return redirect(url_for("shop_order_form"))
@@ -1791,13 +2301,13 @@ def shop_order_submit():
         fetch=True,
         one=True,
     )
-    for pid, qty, unit_price in line_data:
+    for pid, qty, unit_price, remark in line_data:
         query(
             """
             INSERT INTO order_items (order_id, product_id, quantity, unit_price, remarks)
             VALUES (%s,%s,%s,%s,%s)
             """,
-            (row["id"], pid, qty, unit_price, special_request),
+            (row["id"], pid, qty, unit_price, remark),
         )
     recalc_order_totals(int(row["id"]))
     flash("Order received — thank you. We will follow up if anything is unclear.", "success")
@@ -1891,15 +2401,6 @@ def analytics_page():
     )
 
 
-@app.post("/finance/inflows/<int:inflow_id>/link")
-def finance_inflow_link(inflow_id):
-    raw = (request.form.get("order_id") or "").strip()
-    oid = int(raw) if raw.isdigit() else None
-    query("UPDATE finance_cash_inflows SET linked_order_id = %s WHERE id = %s", (oid, inflow_id))
-    flash("Inflow linked to order." if oid else "Order link cleared.", "success")
-    return redirect(url_for("finance_summary"))
-
-
 @app.post("/finance/import-tracker")
 def finance_import_tracker():
     csv_path = os.path.join(BASE_DIR, "database import", "3_The Mug Club_Financials - Financial Tracker.csv")
@@ -1969,12 +2470,14 @@ def export_table(name):
                 "quantity_cups",
                 "txn_date",
                 "screenshot",
-                "person_in_charge",
-                "linked_order_id",
+                "customer_name",
+                "product_name",
+                "payment_type",
+                "payment_status",
             ],
             """
             SELECT source_txn_number, amount, description, quantity_cups, txn_date::text,
-                   screenshot, person_in_charge, linked_order_id
+                   screenshot, customer_name, product_name, payment_type, payment_status
             FROM finance_cash_inflows ORDER BY id
             """,
         ),

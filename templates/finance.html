@@ -2,7 +2,10 @@
 {% block title %}Finance · Mug Club{% endblock %}
 {% block content %}
 <h1>Finance &amp; margins</h1>
-<p class="subtitle">Cash inflows and outflows from the financial tracker, plus margin datasheet views. Link inflows to <a href="{{ url_for('orders_list') }}">orders</a> for reconciliation.</p>
+<p class="subtitle">
+  Cash inflows are stored as <strong>1NF</strong>: one row per singular product bought. Completed + paid orders
+  from the <a href="{{ url_for('orders_list') }}">orders page</a> push themselves in automatically.
+</p>
 
 <div class="header-actions" style="margin: 16px 0 24px;">
   <form method="post" action="{{ url_for('finance_import_tracker') }}" class="inline">
@@ -29,71 +32,69 @@
   </div>
 </div>
 
-<h2>Cash inflows</h2>
-<table class="data-table">
-  <thead>
-    <tr>
-      <th>#</th>
-      <th>Amount</th>
-      <th>Description</th>
-      <th>Cups</th>
-      <th>Date</th>
-      <th>Linked order</th>
-      <th>Person</th>
-    </tr>
-  </thead>
-  <tbody>
-  {% for r in inflows %}
-    <tr>
-      <td>{{ r.source_txn_number or '—' }}</td>
-      <td>{% if r.amount is not none %}${{ '%.2f' % r.amount }}{% else %}—{% endif %}</td>
-      <td class="desc">{{ r.description or '—' }}</td>
-      <td>{{ r.quantity_cups or '—' }}</td>
-      <td>{{ r.txn_date or '—' }}</td>
-      <td>
-        <form method="post" action="{{ url_for('finance_inflow_link', inflow_id=r.id) }}" class="inline">
-          <select name="order_id" onchange="this.form.submit()" style="max-width: 220px;">
-            <option value="">— none —</option>
-            {% for o in recent_orders %}
-              <option value="{{ o.id }}" {% if r.linked_order_id == o.id %}selected{% endif %}>#{{ o.id }} {{ o.customer_name }}</option>
-            {% endfor %}
-          </select>
-        </form>
-        {% if r.linked_customer_name %}<div class="subtitle" style="margin-top:4px;">{{ r.linked_customer_name }}</div>{% endif %}
-      </td>
-      <td class="desc">{{ r.person_in_charge or '—' }}</td>
-    </tr>
-  {% else %}
-    <tr><td colspan="7">No inflow rows. Insert rows via Supabase SQL editor or add rows manually.</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
+<div class="finance-split">
+  <section class="finance-pane">
+    <h2>Cash inflows (1NF)</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Amount</th>
+          <th>Customer</th>
+          <th>Product</th>
+          <th>Cups</th>
+          <th>Date</th>
+          <th>Payment</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in inflows %}
+        <tr>
+          <td>{{ r.source_txn_number or r.id }}</td>
+          <td>{% if r.amount is not none %}${{ '%.2f' % r.amount }}{% else %}—{% endif %}</td>
+          <td>{{ r.customer_name or '—' }}</td>
+          <td class="desc">{{ r.product_name or r.description or '—' }}</td>
+          <td>{{ r.quantity_cups or '—' }}</td>
+          <td>{{ r.txn_date or '—' }}</td>
+          <td><span class="pill {% if r.payment_type == 'paynow' %}warning{% elif r.payment_type == 'cash' %}ok{% endif %}">{{ r.payment_type or '—' }}</span></td>
+          <td><span class="pill {% if r.payment_status == 'paid' %}ok{% elif r.payment_status == 'unpaid' %}danger{% endif %}">{{ r.payment_status or '—' }}</span></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="8">No inflow rows. Import the tracker CSV or finish an order.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
 
-<h2>Cash outflows</h2>
-<table class="data-table">
-  <thead>
-    <tr>
-      <th>#</th>
-      <th>Amount</th>
-      <th>Description</th>
-      <th>Date</th>
-      <th>Person</th>
-    </tr>
-  </thead>
-  <tbody>
-  {% for r in outflows %}
-    <tr>
-      <td>{{ r.source_txn_number or '—' }}</td>
-      <td>{% if r.amount is not none %}${{ '%.2f' % r.amount }}{% else %}—{% endif %}</td>
-      <td class="desc">{{ r.description or '—' }}</td>
-      <td>{{ r.txn_date or '—' }}</td>
-      <td class="desc">{{ r.person_in_charge or '—' }}</td>
-    </tr>
-  {% else %}
-    <tr><td colspan="5">No outflow rows.</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
+  <section class="finance-pane">
+    <h2>Cash outflows</h2>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Amount</th>
+          <th>Description</th>
+          <th>Date</th>
+          <th>Person</th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for r in outflows %}
+        <tr>
+          <td>{{ r.source_txn_number or r.id }}</td>
+          <td>{% if r.amount is not none %}${{ '%.2f' % r.amount }}{% else %}—{% endif %}</td>
+          <td class="desc">{{ r.description or '—' }}</td>
+          <td>{{ r.txn_date or '—' }}</td>
+          <td class="desc">{{ r.person_in_charge or '—' }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5">No outflow rows.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
 
 <h2>Menu margins (from datasheet)</h2>
 <table class="data-table">

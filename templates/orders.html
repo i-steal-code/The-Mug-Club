@@ -8,7 +8,11 @@
     <a class="btn primary" href="{{ url_for('orders_add') }}">+ Add order</a>
   </div>
 </div>
-<p class="subtitle">Structured orders using fixed product selections and quantities.</p>
+<p class="subtitle">
+  Structured orders using fixed product selections. Click the status / payment buttons
+  to morph them to the next state. Orders that are both <strong>Completed</strong> and
+  <strong>Paid</strong> flow into the finance sheet and drop off this list automatically.
+</p>
 
 <table class="data-table">
   <thead>
@@ -19,9 +23,9 @@
       <th>Cups</th>
       <th>Total ($)</th>
       <th>Date</th>
-      <th>Order status</th>
       <th>Pay method</th>
       <th>Payment</th>
+      <th>Status</th>
     </tr>
   </thead>
   <tbody>
@@ -35,26 +39,26 @@
       <td>{{ o.order_date or '—' }}</td>
       <td class="desc">{{ o.payment_method or '—' }}</td>
       <td>
-        <form method="post" action="{{ url_for('orders_update_status', order_id=o.id) }}" class="inline">
-          <select name="order_status" onchange="this.form.submit()">
-            {% for s in order_statuses %}
-              <option value="{{ s }}" {% if o.order_status == s %}selected{% endif %}>{{ s }}</option>
-            {% endfor %}
-          </select>
+        <form method="post" action="{{ url_for('orders_advance_payment', order_id=o.id) }}" class="inline">
+          <button type="submit"
+                  class="btn small morph-btn pay-{{ (o.payment_status or 'Unpaid')|lower }}"
+                  title="Click to advance payment state">
+            {{ o.payment_status }}
+          </button>
         </form>
       </td>
       <td>
-        <form method="post" action="{{ url_for('orders_update_status', order_id=o.id) }}" class="inline">
-          <select name="payment_status" onchange="this.form.submit()">
-            {% for s in payment_statuses %}
-              <option value="{{ s }}" {% if o.payment_status == s %}selected{% endif %}>{{ s }}</option>
-            {% endfor %}
-          </select>
+        <form method="post" action="{{ url_for('orders_advance_status', order_id=o.id) }}" class="inline">
+          <button type="submit"
+                  class="btn small morph-btn ord-{{ (o.order_status or 'Pending')|replace(' ','-')|lower }}"
+                  title="Click to advance order state">
+            {{ o.order_status }}
+          </button>
         </form>
       </td>
     </tr>
   {% else %}
-    <tr><td colspan="9">No orders yet.</td></tr>
+    <tr><td colspan="9">No active orders. Completed + paid orders live in the finance sheet.</td></tr>
   {% endfor %}
   </tbody>
 </table>

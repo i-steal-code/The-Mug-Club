@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}{{ component.name }} · Component · Mug Club{% endblock %}
+{% block content %}
+<p class="subtitle"><a href="{{ url_for('components_page') }}">← All components</a></p>
+<h1>{{ component.name }}</h1>
+<p class="subtitle">
+  {{ component.component_type or 'no type' }} · base yield {{ '%.2f' % (component.base_yield or 1) }}
+</p>
+
+<form method="post" class="form-card">
+  <input type="hidden" name="action" value="save_meta">
+  <h2>Component details</h2>
+  <div class="row">
+    <label>Name
+      <input type="text" name="name" value="{{ component.name }}" required maxlength="120">
+    </label>
+    <label>Type
+      <input type="text" name="component_type" value="{{ component.component_type or '' }}" maxlength="80">
+    </label>
+    <label>Base yield
+      <input type="number" name="base_yield" min="0.25" step="any" value="{{ component.base_yield or 1 }}">
+    </label>
+  </div>
+  <label>Notes
+    <textarea name="notes" rows="2">{{ component.notes or '' }}</textarea>
+  </label>
+  <div class="form-actions"><button class="btn" type="submit">Save details</button></div>
+</form>
+
+<h2>Ingredients (from inventory, in grams)</h2>
+<table class="data-table">
+  <thead>
+    <tr><th>Ingredient</th><th>Amount (g)</th><th>Label override</th><th></th></tr>
+  </thead>
+  <tbody>
+  {% for ing in ingredients %}
+    <tr>
+      <td><strong>{{ ing.inventory_item_name or ing.label_override or '—' }}</strong></td>
+      <td>{% if ing.qty_g is not none %}{{ '%.2f' % ing.qty_g }}{% else %}—{% endif %}</td>
+      <td class="desc">{{ ing.label_override or '—' }}</td>
+      <td>
+        <form method="post" class="inline">
+          <input type="hidden" name="action" value="delete_ingredient">
+          <input type="hidden" name="ingredient_id" value="{{ ing.id }}">
+          <button type="submit" class="btn small danger" onclick="return confirm('Remove this ingredient?');">Del</button>
+        </form>
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4">No ingredients yet. Add rows below.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<form method="post" class="form-card">
+  <input type="hidden" name="action" value="add_ingredient">
+  <h3>Add ingredient row</h3>
+  <div class="row">
+    <label>Inventory item <span class="req">*</span>
+      <select name="inventory_item_id" required>
+        <option value="">Select from inventory</option>
+        {% for it in inventory_items %}
+          <option value="{{ it.id }}">{{ it.item_name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Amount (g)
+      <input type="text" name="qty_g" placeholder="e.g. 12">
+    </label>
+    <label>Label override (optional)
+      <input type="text" name="label_override" maxlength="120" placeholder="display-only rename">
+    </label>
+  </div>
+  <div class="form-actions"><button class="btn primary" type="submit">Add ingredient</button></div>
+</form>
+
+<h2>Steps</h2>
+<ul class="step-list">
+{% for s in steps %}
+  <li class="step-item {% if s.done %}step-done{% endif %}">
+    <form method="post" action="{{ url_for('component_step_toggle', component_id=component.id, step_id=s.id) }}" class="inline">
+      <button type="submit" class="btn ghost">{% if s.done %}✓ Done{% else %}Mark done{% endif %}</button>
+    </form>
+    <span class="step-body">{{ s.body }}</span>
+    <form method="post" class="inline">
+      <input type="hidden" name="action" value="delete_step">
+      <input type="hidden" name="step_id" value="{{ s.id }}">
+      <button type="submit" class="btn small danger" onclick="return confirm('Remove step?');">Del</button>
+    </form>
+  </li>
+{% else %}
+  <li class="subtitle">No steps yet.</li>
+{% endfor %}
+</ul>
+
+<form method="post" class="form-card">
+  <input type="hidden" name="action" value="add_step">
+  <label>Next step
+    <textarea name="body" rows="2" required placeholder="One clear instruction per step…"></textarea>
+  </label>
+  <div class="form-actions"><button class="btn primary" type="submit">Add step</button></div>
+</form>
+{% endblock %}
