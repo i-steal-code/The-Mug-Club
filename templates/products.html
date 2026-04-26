@@ -1,22 +1,24 @@
 {% extends "base.html" %}
-{% block title %}Products · Mug Club{% endblock %}
+{% block title %}Products + Recipes · Mug Club{% endblock %}
 {% block content %}
 <div class="page-header">
-  <h1>Products</h1>
+  <h1>Products + recipes</h1>
   <div class="header-actions">
     <a class="btn ghost" href="{{ url_for('export_table', name='products') }}">Export products CSV</a>
     <a class="btn ghost" href="{{ url_for('export_table', name='order_items') }}">Export order items CSV</a>
+    <a class="btn ghost" href="{{ url_for('export_table', name='recipes') }}">Export recipes CSV</a>
   </div>
 </div>
 <p class="subtitle">
-  Naming conventions are editable here. Orders use these products as fixed dropdown selections.
+  Products are now created together with recipes and share one ID lineage. Margins are estimated from per-serving recipe ingredients and inventory source cost.
 </p>
 
 <form method="post" class="form-card">
-  <h2>Add product</h2>
+  <input type="hidden" name="action" value="save_product">
+  <h2>Create product + recipe card</h2>
   <div class="row">
     <label>Product name <span class="req">*</span>
-      <input type="text" name="product_name" required maxlength="120" placeholder="e.g. Matcha strawberry latte">
+      <input type="text" name="product_name" required maxlength="120" placeholder="e.g. Matcha Strawberry Latte">
     </label>
     <label>Type
       <select name="product_type">
@@ -32,33 +34,77 @@
         <option value="matcha">matcha</option>
       </select>
     </label>
+    <label>Flavour
+      <select name="flavour_id">
+        <option value="">—</option>
+        {% for f in flavours %}
+          <option value="{{ f.id }}">{{ f.name }}</option>
+        {% endfor %}
+      </select>
+    </label>
   </div>
-  <label>Flavour (optional)
-    <input type="text" name="flavour_name" maxlength="80">
+  <div class="row">
+    <label>Selling price ($)
+      <input type="text" name="selling_price" placeholder="e.g. 4.50">
+    </label>
+    <label>Base yield (cups)
+      <input type="number" name="base_yield_cups" min="0.25" step="any" value="1">
+    </label>
+    <label>Image URL (placeholder cup if blank)
+      <input type="text" name="image_url" placeholder="/static/cup-placeholder.svg">
+    </label>
+  </div>
+  <label>Short description
+    <input type="text" name="short_desc" maxlength="280" placeholder="Shown on shop page product selector">
+  </label>
+  <label>Recipe card notes
+    <textarea name="notes" rows="2" placeholder="Remarks for this recipe card"></textarea>
   </label>
   <div class="form-actions">
-    <button class="btn primary" type="submit">Add product</button>
+    <button class="btn primary" type="submit">Create card</button>
   </div>
 </form>
 
-<h2>Existing products</h2>
+<h2>Flavours (dropdown source)</h2>
+<form method="post" class="form-card">
+  <input type="hidden" name="action" value="save_flavour">
+  <div class="row">
+    <label>Flavour name
+      <input type="text" name="flavour_name" required maxlength="80">
+    </label>
+    <label>Cloud scope
+      <select name="cloud_type">
+        <option value="">any</option>
+        <option value="coffee">coffee</option>
+        <option value="matcha">matcha</option>
+      </select>
+    </label>
+  </div>
+  <div class="form-actions"><button class="btn" type="submit">Add flavour</button></div>
+</form>
+
 <table class="data-table">
   <thead>
     <tr>
       <th>ID</th>
-      <th>Name</th>
+      <th>Product</th>
       <th>Type</th>
       <th>Cloud</th>
       <th>Flavour</th>
+      <th>Sell ($)</th>
+      <th>Cost/cup ($ est)</th>
+      <th>Margin ($ est)</th>
       <th>Active</th>
-      <th>Save</th>
+      <th>Recipe</th>
     </tr>
   </thead>
   <tbody>
   {% for p in products %}
     <tr>
       <form method="post">
+        <input type="hidden" name="action" value="save_product">
         <input type="hidden" name="product_id" value="{{ p.id }}">
+        <input type="hidden" name="recipe_id" value="{{ p.recipe_id or '' }}">
         <td>{{ p.id }}</td>
         <td><input type="text" name="product_name" value="{{ p.product_name }}" required maxlength="120"></td>
         <td>
@@ -69,19 +115,36 @@
           </select>
         </td>
         <td>
-          <select name="cloud_type">
+          <select name="cloud_type" {% if p.product_type != 'latte' %}disabled{% endif %}>
             <option value="" {% if not p.cloud_type %}selected{% endif %}>—</option>
             <option value="coffee" {% if p.cloud_type == 'coffee' %}selected{% endif %}>coffee</option>
             <option value="matcha" {% if p.cloud_type == 'matcha' %}selected{% endif %}>matcha</option>
           </select>
         </td>
-        <td><input type="text" name="flavour_name" value="{{ p.flavour_name or '' }}" maxlength="80"></td>
+        <td>
+          <select name="flavour_id">
+            <option value="">—</option>
+            {% for f in flavours %}
+              <option value="{{ f.id }}" {% if (p.flavour_name or '')|lower == f.name|lower %}selected{% endif %}>{{ f.name }}</option>
+            {% endfor %}
+          </select>
+        </td>
+        <td><input type="text" name="selling_price" value="{{ '%.2f' % p.selling_price if p.selling_price is not none else '' }}"></td>
+        <td>{{ '%.4f' % (p.ingredient_cost_per_cup or 0) }}</td>
+        <td>
+          {% if p.selling_price is not none %}
+            {{ '%.4f' % (p.selling_price - (p.ingredient_cost_per_cup or 0)) }}
+          {% else %}—{% endif %}
+        </td>
         <td><input type="checkbox" name="is_active" {% if p.is_active %}checked{% endif %}></td>
-        <td><button class="btn small" type="submit">Save</button></td>
+        <td>
+          <button class="btn small" type="submit">Save</button>
+          {% if p.recipe_id %}<a class="btn small ghost" href="{{ url_for('recipe_detail', recipe_id=p.recipe_id) }}">Card</a>{% endif %}
+        </td>
       </form>
     </tr>
   {% else %}
-    <tr><td colspan="7">No products yet. Add your first menu item above.</td></tr>
+    <tr><td colspan="10">No products yet. Create your first product + recipe card above.</td></tr>
   {% endfor %}
   </tbody>
 </table>

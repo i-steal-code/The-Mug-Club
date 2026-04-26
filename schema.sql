@@ -88,6 +88,9 @@ CREATE TABLE IF NOT EXISTS products (
         CHECK (product_type IN ('latte', 'special')),
     cloud_type     TEXT CHECK (cloud_type IS NULL OR cloud_type IN ('coffee', 'matcha')),
     flavour_name   TEXT,
+    selling_price  DOUBLE PRECISION,
+    short_desc     TEXT,
+    image_url      TEXT,
     is_active      BOOLEAN NOT NULL DEFAULT TRUE,
     display_order  INTEGER NOT NULL DEFAULT 0,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -129,6 +132,7 @@ CREATE TABLE IF NOT EXISTS finance_cash_outflows (
 -- Recipes / menu items (latte rule enforced in app) -------------------------
 CREATE TABLE IF NOT EXISTS recipes (
     id               SERIAL PRIMARY KEY,
+    product_id       INTEGER UNIQUE REFERENCES products(id) ON DELETE CASCADE,
     name             TEXT NOT NULL,
     drink_category   TEXT,
     is_latte         BOOLEAN NOT NULL DEFAULT FALSE,
@@ -160,6 +164,49 @@ CREATE TABLE IF NOT EXISTS recipe_ingredients (
     unit                 TEXT NOT NULL DEFAULT 'g'
 );
 
+CREATE TABLE IF NOT EXISTS flavours (
+    id             SERIAL PRIMARY KEY,
+    name           TEXT NOT NULL UNIQUE,
+    cloud_type     TEXT CHECK (cloud_type IS NULL OR cloud_type IN ('coffee', 'matcha')),
+    is_active      BOOLEAN NOT NULL DEFAULT TRUE,
+    display_order  INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS recipe_components (
+    id            SERIAL PRIMARY KEY,
+    recipe_id     INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    component_name TEXT NOT NULL,
+    remarks       TEXT,
+    sort_order    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS recipe_component_prep (
+    id             SERIAL PRIMARY KEY,
+    component_id    INTEGER NOT NULL REFERENCES recipe_components(id) ON DELETE CASCADE,
+    prep_name       TEXT NOT NULL,
+    remarks         TEXT,
+    done            BOOLEAN NOT NULL DEFAULT FALSE,
+    sort_order      INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS recipe_component_steps (
+    id             SERIAL PRIMARY KEY,
+    component_id    INTEGER NOT NULL REFERENCES recipe_components(id) ON DELETE CASCADE,
+    step_name       TEXT NOT NULL,
+    remarks         TEXT,
+    done            BOOLEAN NOT NULL DEFAULT FALSE,
+    sort_order      INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS recipe_assembly_steps (
+    id            SERIAL PRIMARY KEY,
+    recipe_id     INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+    step_name     TEXT NOT NULL,
+    remarks       TEXT,
+    done          BOOLEAN NOT NULL DEFAULT FALSE,
+    sort_order    INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS idx_tasks_assigned ON tasks(assigned_member_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status   ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_orders_status  ON orders(order_status);
@@ -170,3 +217,8 @@ CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(r
 CREATE INDEX IF NOT EXISTS idx_finance_inflow_order ON finance_cash_inflows(linked_order_id);
 CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_order_items_product ON order_items(product_id);
+CREATE INDEX IF NOT EXISTS idx_recipes_product ON recipes(product_id);
+CREATE INDEX IF NOT EXISTS idx_recipe_components_recipe ON recipe_components(recipe_id);
+CREATE INDEX IF NOT EXISTS idx_recipe_prep_component ON recipe_component_prep(component_id);
+CREATE INDEX IF NOT EXISTS idx_recipe_steps_component ON recipe_component_steps(component_id);
+CREATE INDEX IF NOT EXISTS idx_recipe_assembly_recipe ON recipe_assembly_steps(recipe_id);

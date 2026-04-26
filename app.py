@@ -38,7 +38,6 @@ CLOUD_TYPES = ("coffee", "matcha")
 # Customer-facing payment choice (stored on orders.payment_method)
 CUSTOMER_PAYMENT_METHODS = (
     ("paynow_qr", "PayNow (scan QR)"),
-    ("paynow_mobile", "PayNow (mobile number)"),
     ("cash_collection", "Cash / in person at collection"),
 )
 PRODUCT_TYPES = ("latte", "special")
@@ -300,6 +299,71 @@ _SCHEMA_MIGRATION_DDL = [
     """,
     "CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id)",
     "CREATE INDEX IF NOT EXISTS idx_order_items_product ON order_items(product_id)",
+    "ALTER TABLE products ADD COLUMN IF NOT EXISTS selling_price DOUBLE PRECISION",
+    "ALTER TABLE products ADD COLUMN IF NOT EXISTS short_desc TEXT",
+    "ALTER TABLE products ADD COLUMN IF NOT EXISTS image_url TEXT",
+    "ALTER TABLE recipes ADD COLUMN IF NOT EXISTS product_id INTEGER UNIQUE",
+    """
+    DO $$ BEGIN
+      ALTER TABLE recipes
+        ADD CONSTRAINT recipes_product_id_fkey
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE;
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS flavours (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        cloud_type TEXT CHECK (cloud_type IS NULL OR cloud_type IN ('coffee', 'matcha')),
+        is_active BOOLEAN NOT NULL DEFAULT TRUE,
+        display_order INTEGER NOT NULL DEFAULT 0
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS recipe_components (
+        id SERIAL PRIMARY KEY,
+        recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+        component_name TEXT NOT NULL,
+        remarks TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS recipe_component_prep (
+        id SERIAL PRIMARY KEY,
+        component_id INTEGER NOT NULL REFERENCES recipe_components(id) ON DELETE CASCADE,
+        prep_name TEXT NOT NULL,
+        remarks TEXT,
+        done BOOLEAN NOT NULL DEFAULT FALSE,
+        sort_order INTEGER NOT NULL DEFAULT 0
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS recipe_component_steps (
+        id SERIAL PRIMARY KEY,
+        component_id INTEGER NOT NULL REFERENCES recipe_components(id) ON DELETE CASCADE,
+        step_name TEXT NOT NULL,
+        remarks TEXT,
+        done BOOLEAN NOT NULL DEFAULT FALSE,
+        sort_order INTEGER NOT NULL DEFAULT 0
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS recipe_assembly_steps (
+        id SERIAL PRIMARY KEY,
+        recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE CASCADE,
+        step_name TEXT NOT NULL,
+        remarks TEXT,
+        done BOOLEAN NOT NULL DEFAULT FALSE,
+        sort_order INTEGER NOT NULL DEFAULT 0
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_recipes_product ON recipes(product_id)",
+    "CREATE INDEX IF NOT EXISTS idx_recipe_components_recipe ON recipe_components(recipe_id)",
+    "CREATE INDEX IF NOT EXISTS idx_recipe_prep_component ON recipe_component_prep(component_id)",
+    "CREATE INDEX IF NOT EXISTS idx_recipe_steps_component ON recipe_component_steps(component_id)",
+    "CREATE INDEX IF NOT EXISTS idx_recipe_assembly_recipe ON recipe_assembly_steps(recipe_id)",
 ]
 
 
@@ -341,6 +405,26 @@ def ensure_schema_only() -> None:
                         ON CONFLICT (product_name) DO NOTHING
                         """
                     )
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO flavours (name, cloud_type, is_active, display_order)
+                    VALUES
+                      ('original', NULL, TRUE, 10),
+                      ('strawberry', 'matcha', TRUE, 20),
+                      ('honey buttercream', NULL, TRUE, 30),
+                      ('mocha', 'coffee', TRUE, 40)
+                    ON CONFLICT (name) DO NOTHING
+                    """
+                )
+                cur.execute(
+                    """
+                    UPDATE recipes r
+                    SET product_id = p.id
+                    FROM products p
+                    WHERE r.product_id IS NULL AND lower(trim(r.name)) = lower(trim(p.product_name))
+                    """
+                )
     finally:
         conn.close()
 
@@ -398,7 +482,15 @@ def parse_date(value) -> date | None:
     s = str(value).strip().split(",")[0].strip()
     if not s:
         return None
-    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d"):
+    if s == "-":
+        return None
+    for fmt in (
+        "%d/%m/%Y",
+        "%d/%m/%y",
+        "%Y-%m-%d",
+        "%m/%d/%Y %H:%M:%S",
+        "%m/%d/%Y",
+    ):
         try:
             return datetime.strptime(s, fmt).date()
         except ValueError:
@@ -445,6 +537,18 @@ def list_active_products():
         FROM products
         WHERE is_active = TRUE
         ORDER BY display_order, product_name
+        """,
+        fetch=True,
+    ) or []
+
+
+def list_active_flavours():
+    return query(
+        """
+        SELECT *
+        FROM flavours
+        WHERE is_active = TRUE
+        ORDER BY display_order, name
         """,
         fetch=True,
     ) or []
@@ -642,9 +746,9 @@ def import_financial_csv(stream, replace: bool = False) -> tuple[int, int]:
     rows = list(csv.reader(text))
     start = None
     for i, row in enumerate(rows):
-        joined = ",".join(row)
-        if "Transaction Item" in joined and "Cash Inflow" in joined:
-            start = i + 2
+        joined = ",".join((c or "") for c in row).lower()
+        if "transaction item" in joined and "cash inflow" in joined:
+            start = i + 1
             break
     if start is None:
         raise ValueError("Could not find financial tracker header row.")
@@ -655,23 +759,35 @@ def import_financial_csv(stream, replace: bool = False) -> tuple[int, int]:
     for row in rows[start:]:
         if not row or len(row) < 4:
             continue
+
         def g(idx):
-            return row[idx] if idx < len(row) else ""
+            return (row[idx] if idx < len(row) else "") or ""
+
+        # skip subheader / totals rows / mostly empty rows
+        marker = f"{g(2)} {g(3)} {g(4)}".strip().lower()
+        if (
+            marker.startswith("- amount")
+            or "total cups" in marker
+            or "w1:" in marker
+            or "w2:" in marker
+            or "w3:" in marker
+        ):
+            continue
 
         txn_in = parse_int(g(2))
         amt_in = parse_money(g(3))
-        desc_in = (g(4) or "").strip() or None
+        desc_in = g(4).strip() or None
         cups = parse_int(g(5))
         d_in = parse_date(g(6))
-        shot_in = (g(7) or "").strip() or None
-        pic_in = (g(8) or "").strip() or None
+        shot_in = g(7).strip() or None
+        pic_in = g(8).strip() or None
 
         txn_out = parse_int(g(9))
         amt_out = parse_money(g(10))
-        desc_out = (g(11) or "").strip() or None
+        desc_out = g(11).strip() or None
         d_out = parse_date(g(12))
-        shot_out = (g(13) or "").strip() or None
-        pic_out = (g(14) or "").strip() or None if len(row) > 14 else None
+        shot_out = g(13).strip() or None
+        pic_out = g(14).strip() or None if len(row) > 14 else None
 
         if amt_in is not None:
             inflows.append((txn_in, amt_in, desc_in, cups, d_in, shot_in, pic_in))
@@ -1073,17 +1189,60 @@ def orders_update_status(order_id):
 @app.route("/products", methods=["GET", "POST"])
 def products_page():
     if request.method == "POST":
+        action = request.form.get("action")
+        if action == "save_flavour":
+            fid = request.form.get("flavour_id", type=int)
+            fname = request.form.get("flavour_name", "").strip()
+            fcloud = request.form.get("cloud_type") or None
+            factive = request.form.get("is_active") == "on"
+            if not fname:
+                flash("Flavour name is required.", "error")
+                return redirect(url_for("products_page"))
+            if fid:
+                query(
+                    "UPDATE flavours SET name = %s, cloud_type = %s, is_active = %s WHERE id = %s",
+                    (fname, fcloud, factive, fid),
+                )
+                flash("Flavour updated.", "success")
+            else:
+                query(
+                    "INSERT INTO flavours (name, cloud_type, is_active) VALUES (%s,%s,%s)",
+                    (fname, fcloud, True),
+                )
+                flash("Flavour added.", "success")
+            return redirect(url_for("products_page"))
+
         pid = request.form.get("product_id", type=int)
+        rid = request.form.get("recipe_id", type=int)
         name = request.form.get("product_name", "").strip()
         ptype = request.form.get("product_type", "special")
         cloud_type = request.form.get("cloud_type") or None
-        flavour = request.form.get("flavour_name", "").strip() or None
-        is_active = request.form.get("is_active") == "on"
-        if ptype not in PRODUCT_TYPES:
-            flash("Invalid product type.", "error")
+        flavour_id = request.form.get("flavour_id", type=int)
+        flavour_row = (
+            query("SELECT * FROM flavours WHERE id = %s", (flavour_id,), fetch=True, one=True)
+            if flavour_id
+            else None
+        )
+        flavour = flavour_row["name"] if flavour_row else None
+        if ptype == "latte" and cloud_type not in CLOUD_TYPES:
+            flash("Latte products need a cloud type.", "error")
             return redirect(url_for("products_page"))
         if ptype != "latte":
             cloud_type = None
+        is_active = request.form.get("is_active") == "on"
+        selling_price = parse_money(request.form.get("selling_price"))
+        short_desc = request.form.get("short_desc", "").strip() or None
+        image_url = request.form.get("image_url", "").strip() or None
+        notes = request.form.get("notes", "").strip() or None
+        try:
+            by = float(request.form.get("base_yield_cups") or 1)
+        except ValueError:
+            by = 1.0
+        if by <= 0:
+            by = 1.0
+        if ptype not in PRODUCT_TYPES:
+            flash("Invalid product type.", "error")
+            return redirect(url_for("products_page"))
         if not name:
             flash("Product name is required.", "error")
             return redirect(url_for("products_page"))
@@ -1092,28 +1251,87 @@ def products_page():
                 """
                 UPDATE products
                 SET product_name = %s, product_type = %s, cloud_type = %s,
-                    flavour_name = %s, is_active = %s
+                    flavour_name = %s, selling_price = %s, short_desc = %s, image_url = %s, is_active = %s
                 WHERE id = %s
                 """,
-                (name, ptype, cloud_type, flavour, is_active, pid),
+                (name, ptype, cloud_type, flavour, selling_price, short_desc, image_url, is_active, pid),
             )
-            flash("Product updated.", "success")
+            if rid:
+                query(
+                    """
+                    UPDATE recipes
+                    SET name = %s, drink_category = %s, is_latte = %s, cloud_type = %s,
+                        flavour_name = %s, notes = %s, base_yield_cups = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        name,
+                        ptype,
+                        ptype == "latte",
+                        cloud_type,
+                        flavour or "",
+                        notes,
+                        by,
+                        rid,
+                    ),
+                )
+            flash("Product/recipe updated.", "success")
         else:
+            prow = query(
+                """
+                INSERT INTO products
+                  (product_name, product_type, cloud_type, flavour_name, selling_price, short_desc, image_url, is_active)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                RETURNING id
+                """,
+                (name, ptype, cloud_type, flavour, selling_price, short_desc, image_url, True),
+                fetch=True,
+                one=True,
+            )
             query(
                 """
-                INSERT INTO products (product_name, product_type, cloud_type, flavour_name, is_active)
-                VALUES (%s,%s,%s,%s,%s)
+                INSERT INTO recipes
+                  (product_id, name, drink_category, is_latte, cloud_type, flavour_name, notes, base_yield_cups)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
                 """,
-                (name, ptype, cloud_type, flavour, True),
+                (
+                    prow["id"],
+                    name,
+                    ptype,
+                    ptype == "latte",
+                    cloud_type,
+                    flavour or "",
+                    notes,
+                    by,
+                ),
             )
-            flash("Product added.", "success")
+            flash("Product + recipe created.", "success")
         return redirect(url_for("products_page"))
 
     products = query(
-        "SELECT * FROM products ORDER BY display_order, product_name",
+        """
+        SELECT
+            p.*,
+            r.id AS recipe_id,
+            r.notes,
+            r.base_yield_cups,
+            COALESCE(SUM((ri.qty_per_yield / NULLIF(r.base_yield_cups, 0)) * (ii.source_cost / NULLIF(ii.source_qty_g, 0))), 0) AS ingredient_cost_per_cup
+        FROM products p
+        LEFT JOIN recipes r ON r.product_id = p.id
+        LEFT JOIN recipe_ingredients ri ON ri.recipe_id = r.id
+        LEFT JOIN inventory_items ii ON ii.id = ri.inventory_item_id
+        GROUP BY p.id, r.id
+        ORDER BY p.display_order, p.product_name
+        """,
         fetch=True,
     )
-    return render_template("products.html", products=products or [], product_types=PRODUCT_TYPES)
+    flavours = query("SELECT * FROM flavours ORDER BY display_order, name", fetch=True)
+    return render_template(
+        "products.html",
+        products=products or [],
+        product_types=PRODUCT_TYPES,
+        flavours=flavours or [],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1161,6 +1379,23 @@ def finance_summary():
         """,
         fetch=True,
     )
+    product_margins = query(
+        """
+        SELECT
+            p.id,
+            p.product_name,
+            p.selling_price,
+            r.base_yield_cups,
+            COALESCE(SUM((ri.qty_per_yield / NULLIF(r.base_yield_cups, 0)) * (ii.source_cost / NULLIF(ii.source_qty_g, 0))), 0) AS ingredient_cost_per_cup
+        FROM products p
+        LEFT JOIN recipes r ON r.product_id = p.id
+        LEFT JOIN recipe_ingredients ri ON ri.recipe_id = r.id
+        LEFT JOIN inventory_items ii ON ii.id = ri.inventory_item_id
+        GROUP BY p.id, r.id
+        ORDER BY p.product_name
+        """,
+        fetch=True,
+    )
     return render_template(
         "finance.html",
         margin_menu=margin_menu or [],
@@ -1171,6 +1406,7 @@ def finance_summary():
         total_expenses=float(exp or 0),
         net=float((rev or 0) - (exp or 0)),
         recent_orders=recent_orders or [],
+        product_margins=product_margins or [],
     )
 
 
@@ -1201,48 +1437,7 @@ def members_page():
 # ---------------------------------------------------------------------------
 @app.route("/recipes", methods=["GET", "POST"])
 def recipes_page():
-    if request.method == "POST":
-        name = request.form.get("name", "").strip()
-        drink_category = request.form.get("drink_category", "").strip() or None
-        is_latte = request.form.get("is_latte") == "on"
-        cloud_type = request.form.get("cloud_type") or None
-        flavour_name = (request.form.get("flavour_name") or "").strip()
-        notes = request.form.get("notes", "").strip() or None
-
-        if not name:
-            flash("Recipe name is required.", "error")
-            return redirect(url_for("recipes_page"))
-        if is_latte:
-            if cloud_type not in CLOUD_TYPES:
-                flash("Lattes need a cloud: coffee or matcha.", "error")
-                return redirect(url_for("recipes_page"))
-        else:
-            cloud_type = None
-        try:
-            by = float(request.form.get("base_yield_cups") or 1)
-        except ValueError:
-            by = 1.0
-        if by <= 0:
-            by = 1.0
-        try:
-            query(
-                """
-                INSERT INTO recipes (name, drink_category, is_latte, cloud_type, flavour_name, notes, base_yield_cups)
-                VALUES (%s,%s,%s,%s,%s,%s,%s)
-                """,
-                (name, drink_category, is_latte, cloud_type, flavour_name, notes, by),
-            )
-            flash("Recipe added.", "success")
-        except Exception as exc:  # noqa: BLE001
-            flash(f"Could not save recipe: {exc}", "error")
-        return redirect(url_for("recipes_page"))
-
-    recipes = query("SELECT * FROM recipes ORDER BY created_at DESC", fetch=True)
-    return render_template(
-        "recipes.html",
-        recipes=recipes or [],
-        cloud_types=CLOUD_TYPES,
-    )
+    return redirect(url_for("products_page"))
 
 
 def _recipe_scale_factor(recipe: dict, desired: float | None) -> float:
@@ -1319,6 +1514,68 @@ def recipe_detail(recipe_id):
                 by = 1.0
             query("UPDATE recipes SET base_yield_cups = %s WHERE id = %s", (by, recipe_id))
             flash("Base yield updated.", "success")
+        elif action == "add_component":
+            cname = request.form.get("component_name", "").strip()
+            cremarks = request.form.get("component_remarks", "").strip() or None
+            if cname:
+                so = query(
+                    "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM recipe_components WHERE recipe_id = %s",
+                    (recipe_id,),
+                    fetch=True,
+                    one=True,
+                )["n"]
+                query(
+                    "INSERT INTO recipe_components (recipe_id, component_name, remarks, sort_order) VALUES (%s,%s,%s,%s)",
+                    (recipe_id, cname, cremarks, so),
+                )
+                flash("Component added.", "success")
+        elif action == "add_component_prep":
+            cid = request.form.get("component_id", type=int)
+            pname = request.form.get("prep_name", "").strip()
+            premarks = request.form.get("prep_remarks", "").strip() or None
+            if cid and pname:
+                so = query(
+                    "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM recipe_component_prep WHERE component_id = %s",
+                    (cid,),
+                    fetch=True,
+                    one=True,
+                )["n"]
+                query(
+                    "INSERT INTO recipe_component_prep (component_id, prep_name, remarks, sort_order) VALUES (%s,%s,%s,%s)",
+                    (cid, pname, premarks, so),
+                )
+                flash("Prep checkpoint added.", "success")
+        elif action == "add_component_step":
+            cid = request.form.get("component_id", type=int)
+            sname = request.form.get("step_name", "").strip()
+            sremarks = request.form.get("step_remarks", "").strip() or None
+            if cid and sname:
+                so = query(
+                    "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM recipe_component_steps WHERE component_id = %s",
+                    (cid,),
+                    fetch=True,
+                    one=True,
+                )["n"]
+                query(
+                    "INSERT INTO recipe_component_steps (component_id, step_name, remarks, sort_order) VALUES (%s,%s,%s,%s)",
+                    (cid, sname, sremarks, so),
+                )
+                flash("Component step added.", "success")
+        elif action == "add_assembly_step":
+            sname = request.form.get("step_name", "").strip()
+            sremarks = request.form.get("step_remarks", "").strip() or None
+            if sname:
+                so = query(
+                    "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM recipe_assembly_steps WHERE recipe_id = %s",
+                    (recipe_id,),
+                    fetch=True,
+                    one=True,
+                )["n"]
+                query(
+                    "INSERT INTO recipe_assembly_steps (recipe_id, step_name, remarks, sort_order) VALUES (%s,%s,%s,%s)",
+                    (recipe_id, sname, sremarks, so),
+                )
+                flash("Assembly step added.", "success")
         return redirect(url_for("recipe_detail", recipe_id=recipe_id, **back_q))
 
     desired = request.values.get("desired_cups", type=float)
@@ -1344,6 +1601,38 @@ def recipe_detail(recipe_id):
         "SELECT id, item_name FROM inventory_items ORDER BY item_name",
         fetch=True,
     )
+    components = query(
+        "SELECT * FROM recipe_components WHERE recipe_id = %s ORDER BY sort_order, id",
+        (recipe_id,),
+        fetch=True,
+    ) or []
+    prep_rows = query(
+        """
+        SELECT rp.*, rc.component_name
+        FROM recipe_component_prep rp
+        JOIN recipe_components rc ON rc.id = rp.component_id
+        WHERE rc.recipe_id = %s
+        ORDER BY rc.sort_order, rp.sort_order, rp.id
+        """,
+        (recipe_id,),
+        fetch=True,
+    ) or []
+    component_steps = query(
+        """
+        SELECT rs.*, rc.component_name
+        FROM recipe_component_steps rs
+        JOIN recipe_components rc ON rc.id = rs.component_id
+        WHERE rc.recipe_id = %s
+        ORDER BY rc.sort_order, rs.sort_order, rs.id
+        """,
+        (recipe_id,),
+        fetch=True,
+    ) or []
+    assembly_steps = query(
+        "SELECT * FROM recipe_assembly_steps WHERE recipe_id = %s ORDER BY sort_order, id",
+        (recipe_id,),
+        fetch=True,
+    ) or []
     enriched = []
     for ing in ingredients or []:
         row = dict(ing)
@@ -1366,6 +1655,10 @@ def recipe_detail(recipe_id):
         desired_output=float(desired) if desired is not None else float(recipe.get("base_yield_cups") or 1),
         preserve_desired_cups=dc_raw,
         inventory_items=inventory_items or [],
+        components=components,
+        prep_rows=prep_rows,
+        component_steps=component_steps,
+        assembly_steps=assembly_steps,
     )
 
 
@@ -1382,6 +1675,43 @@ def recipe_step_toggle(recipe_id, step_id):
     return redirect(url_for("recipe_detail", recipe_id=recipe_id, **q))
 
 
+@app.post("/recipes/<int:recipe_id>/prep/<int:prep_id>/toggle")
+def recipe_prep_toggle(recipe_id, prep_id):
+    query(
+        """
+        UPDATE recipe_component_prep
+        SET done = NOT done
+        WHERE id = %s
+          AND component_id IN (SELECT id FROM recipe_components WHERE recipe_id = %s)
+        """,
+        (prep_id, recipe_id),
+    )
+    return redirect(url_for("recipe_detail", recipe_id=recipe_id))
+
+
+@app.post("/recipes/<int:recipe_id>/component-step/<int:step_id>/toggle")
+def recipe_component_step_toggle(recipe_id, step_id):
+    query(
+        """
+        UPDATE recipe_component_steps
+        SET done = NOT done
+        WHERE id = %s
+          AND component_id IN (SELECT id FROM recipe_components WHERE recipe_id = %s)
+        """,
+        (step_id, recipe_id),
+    )
+    return redirect(url_for("recipe_detail", recipe_id=recipe_id))
+
+
+@app.post("/recipes/<int:recipe_id>/assembly/<int:step_id>/toggle")
+def recipe_assembly_step_toggle(recipe_id, step_id):
+    query(
+        "UPDATE recipe_assembly_steps SET done = NOT done WHERE id = %s AND recipe_id = %s",
+        (step_id, recipe_id),
+    )
+    return redirect(url_for("recipe_detail", recipe_id=recipe_id))
+
+
 @app.get("/shop")
 def shop_order_form():
     return render_template(
@@ -1394,38 +1724,55 @@ def shop_order_form():
 @app.post("/shop")
 def shop_order_submit():
     customer = request.form.get("customer_name", "").strip()
-    product_id = request.form.get("product_id", type=int)
-    try:
-        cups = int(request.form.get("quantity", 1) or 1)
-    except ValueError:
-        cups = 1
-    if cups < 1:
-        cups = 1
-    unit_price = parse_money(request.form.get("unit_price"))
+    product_ids = request.form.getlist("product_id")
+    quantities = request.form.getlist("quantity")
     special_request = request.form.get("special_request", "").strip() or None
     pm = request.form.get("payment_method") or ""
     valid = {x[0] for x in CUSTOMER_PAYMENT_METHODS}
-    mobile = request.form.get("paynow_mobile", "").strip()
     if not customer:
         flash("Please enter your name.", "error")
         return redirect(url_for("shop_order_form"))
-    if not product_id:
-        flash("Please choose a product.", "error")
+    lines: list[tuple[int, int]] = []
+    for i, raw_pid in enumerate(product_ids):
+        pid = parse_int(raw_pid)
+        qty = parse_int(quantities[i] if i < len(quantities) else "1") or 0
+        if pid and qty > 0:
+            lines.append((pid, qty))
+    if not lines:
+        flash("Please add at least one product line.", "error")
         return redirect(url_for("shop_order_form"))
     if pm not in valid:
         flash("Choose a payment option.", "error")
         return redirect(url_for("shop_order_form"))
     note_bits = [f"customer_portal:{pm}"]
     if pm == "paynow_qr":
-        note_bits.append("PayNow via QR — staff will confirm receipt.")
-    elif pm == "paynow_mobile":
-        if mobile:
-            note_bits.append(f"PayNow mobile: {mobile}")
-        else:
-            note_bits.append("PayNow via mobile number — provide at collection if needed.")
+        note_bits.append("PayNow via QR — customer pays to listed mobile number.")
     else:
         note_bits.append("Pay on collection (cash / in person).")
     notes = " · ".join(note_bits)
+    products = {
+        r["id"]: r
+        for r in query(
+            "SELECT id, product_name, selling_price FROM products WHERE id = ANY(%s)",
+            ([pid for pid, _ in lines],),
+            fetch=True,
+        )
+    }
+    total_amount = 0.0
+    total_cups = 0
+    line_data: list[tuple[int, int, float | None]] = []
+    for pid, qty in lines:
+        p = products.get(pid)
+        if not p:
+            continue
+        unit_price = float(p["selling_price"]) if p.get("selling_price") is not None else None
+        total_cups += qty
+        if unit_price is not None:
+            total_amount += unit_price * qty
+        line_data.append((pid, qty, unit_price))
+    if not line_data:
+        flash("No valid products selected.", "error")
+        return redirect(url_for("shop_order_form"))
     row = query(
         """
         INSERT INTO orders
@@ -1435,8 +1782,8 @@ def shop_order_submit():
         """,
         (
             customer,
-            cups,
-            unit_price * cups if unit_price is not None else None,
+            total_cups,
+            total_amount if total_amount > 0 else None,
             date.today(),
             notes,
             pm,
@@ -1444,13 +1791,14 @@ def shop_order_submit():
         fetch=True,
         one=True,
     )
-    query(
-        """
-        INSERT INTO order_items (order_id, product_id, quantity, unit_price, remarks)
-        VALUES (%s,%s,%s,%s,%s)
-        """,
-        (row["id"], product_id, cups, unit_price, special_request),
-    )
+    for pid, qty, unit_price in line_data:
+        query(
+            """
+            INSERT INTO order_items (order_id, product_id, quantity, unit_price, remarks)
+            VALUES (%s,%s,%s,%s,%s)
+            """,
+            (row["id"], pid, qty, unit_price, special_request),
+        )
     recalc_order_totals(int(row["id"]))
     flash("Order received — thank you. We will follow up if anything is unclear.", "success")
     return redirect(url_for("shop_order_form"))
@@ -1516,6 +1864,21 @@ def analytics_page():
         """,
         fetch=True,
     )
+    product_margin_snapshot = query(
+        """
+        SELECT
+            p.product_name,
+            p.selling_price,
+            COALESCE(SUM((ri.qty_per_yield / NULLIF(r.base_yield_cups, 0)) * (ii.source_cost / NULLIF(ii.source_qty_g, 0))), 0) AS ingredient_cost_per_cup
+        FROM products p
+        LEFT JOIN recipes r ON r.product_id = p.id
+        LEFT JOIN recipe_ingredients ri ON ri.recipe_id = r.id
+        LEFT JOIN inventory_items ii ON ii.id = ri.inventory_item_id
+        GROUP BY p.id, r.id
+        ORDER BY p.product_name
+        """,
+        fetch=True,
+    )
     return render_template(
         "analytics.html",
         menu_by_category=menu_by_category or [],
@@ -1524,6 +1887,7 @@ def analytics_page():
         orders_by_weekday=orders_by_weekday or [],
         prep_completion=prep_completion or {"total": 0, "ready": 0},
         top_products=top_products or [],
+        product_margin_snapshot=product_margin_snapshot or [],
     )
 
 
@@ -1533,6 +1897,24 @@ def finance_inflow_link(inflow_id):
     oid = int(raw) if raw.isdigit() else None
     query("UPDATE finance_cash_inflows SET linked_order_id = %s WHERE id = %s", (oid, inflow_id))
     flash("Inflow linked to order." if oid else "Order link cleared.", "success")
+    return redirect(url_for("finance_summary"))
+
+
+@app.post("/finance/import-tracker")
+def finance_import_tracker():
+    csv_path = os.path.join(BASE_DIR, "database import", "3_The Mug Club_Financials - Financial Tracker.csv")
+    if not os.path.isfile(csv_path):
+        flash("Financial tracker CSV file not found.", "error")
+        return redirect(url_for("finance_summary"))
+    try:
+        with open(csv_path, "rb") as f:
+            inflows, outflows = import_financial_csv(f, replace=True)
+        flash(
+            f"Financial tracker imported: {inflows} inflows and {outflows} outflows.",
+            "success",
+        )
+    except Exception as exc:  # noqa: BLE001
+        flash(f"Financial import failed: {exc}", "error")
     return redirect(url_for("finance_summary"))
 
 
@@ -1640,8 +2022,13 @@ def export_table(name):
         ),
         "products": (
             "products.csv",
-            ["product_name", "product_type", "cloud_type", "flavour_name", "is_active"],
-            "SELECT product_name, product_type, cloud_type, flavour_name, is_active FROM products ORDER BY id",
+            ["product_name", "product_type", "cloud_type", "flavour_name", "selling_price", "short_desc", "image_url", "is_active"],
+            "SELECT product_name, product_type, cloud_type, flavour_name, selling_price, short_desc, image_url, is_active FROM products ORDER BY id",
+        ),
+        "flavours": (
+            "flavours.csv",
+            ["name", "cloud_type", "is_active"],
+            "SELECT name, cloud_type, is_active FROM flavours ORDER BY id",
         ),
         "order_items": (
             "order_items.csv",

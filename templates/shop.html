@@ -2,32 +2,59 @@
 {% block title %}Place an order (beta) · Mug Club{% endblock %}
 {% block content %}
 <h1>Order drinks <span class="pill warning">beta</span></h1>
-<p class="subtitle">Simple checkout for customers. Staff still fulfils in the main <a href="{{ url_for('orders_list') }}">Orders</a> board — no separate login yet.</p>
+<p class="subtitle">Interactive order list with product cards, pricing, and cart total before payment.</p>
 
 <form method="post" action="{{ url_for('shop_order_submit') }}" class="form-card">
   <label>Your name <span class="req">*</span>
     <input type="text" name="customer_name" required maxlength="120" autocomplete="name">
   </label>
 
-  <div class="row">
-    <label>Product <span class="req">*</span>
-      <select name="product_id" required>
-        <option value="">Choose an item</option>
-        {% for p in products %}
-          <option value="{{ p.id }}">{{ p.product_name }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Number of cups
-      <input type="number" name="quantity" min="1" value="1" required>
-    </label>
-    <label>Price per cup (optional, $)
-      <input type="text" name="unit_price" placeholder="leave blank if unsure">
-    </label>
+  <h2>Build your order</h2>
+  <div id="shop-lines">
+    <div class="row shop-line">
+      <label>Product
+        <select name="product_id" required>
+          <option value="">Choose an item</option>
+          {% for p in products %}
+            <option value="{{ p.id }}" data-price="{{ p.selling_price or '' }}">{{ p.product_name }}{% if p.selling_price is not none %} (${{ '%.2f' % p.selling_price }}){% endif %}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Qty
+        <input type="number" name="quantity" min="1" value="1" required>
+      </label>
+      <div class="info-card" style="min-width:180px;">
+        <strong>Preview</strong>
+        <p class="subtitle line-total">$0.00</p>
+      </div>
+    </div>
+  </div>
+  <div class="form-actions">
+    <button class="btn ghost" id="add-line-btn" type="button">+ Add another product</button>
   </div>
   <label>Special request / remarks
     <input type="text" name="special_request" maxlength="300" placeholder="e.g. less sweet">
   </label>
+
+  <div class="stats">
+    <div class="summary-card">
+      <h3>Estimated total</h3>
+      <p class="big" id="cart-total">$0.00</p>
+      <small>Calculated from selected product prices.</small>
+    </div>
+  </div>
+
+  <h2>Menu snapshots</h2>
+  <div class="stats">
+    {% for p in products %}
+    <div class="stat-card" style="min-width:240px;">
+      <img src="{{ p.image_url or '/static/cup-placeholder.svg' }}" alt="{{ p.product_name }}" style="width:100%;max-height:140px;object-fit:contain;background:#fff;border:1px solid var(--border-soft);border-radius:8px;">
+      <h3 style="margin-top:10px;">{{ p.product_name }}</h3>
+      <p class="subtitle">{{ p.short_desc or 'Freshly made to order.' }}</p>
+      <p><strong>{% if p.selling_price is not none %}${{ '%.2f' % p.selling_price }}{% else %}Price TBC{% endif %}</strong></p>
+    </div>
+    {% endfor %}
+  </div>
 
   <fieldset class="form-card" style="margin-top: 20px;">
     <legend>Payment <small class="muted">choose one</small></legend>
@@ -37,13 +64,53 @@
       {{ label }}
     </label>
     {% endfor %}
-    <label>PayNow mobile number <small class="muted">(only if you chose PayNow mobile)</small>
-      <input type="text" name="paynow_mobile" maxlength="40" placeholder="+65 …" autocomplete="tel">
-    </label>
+    <div class="info-card">
+      <h3>PayNow</h3>
+      <img src="/static/paynow-qr-placeholder.svg" alt="PayNow QR placeholder" style="width:180px;max-width:100%;background:#fff;border:1px solid var(--border-soft);border-radius:8px;">
+      <p class="subtitle">Mobile number: <strong>+65 9000 1234</strong></p>
+    </div>
   </fieldset>
 
   <div class="form-actions">
     <button class="btn primary" type="submit">Submit order</button>
   </div>
 </form>
+<script>
+(() => {
+  const linesRoot = document.getElementById("shop-lines");
+  const addBtn = document.getElementById("add-line-btn");
+  const totalEl = document.getElementById("cart-total");
+  if (!linesRoot || !addBtn || !totalEl) return;
+
+  const lineTemplate = () => {
+    const src = linesRoot.querySelector(".shop-line");
+    const clone = src.cloneNode(true);
+    clone.querySelector("select[name='product_id']").value = "";
+    clone.querySelector("input[name='quantity']").value = "1";
+    clone.querySelector(".line-total").textContent = "$0.00";
+    return clone;
+  };
+
+  const recalc = () => {
+    let grand = 0;
+    linesRoot.querySelectorAll(".shop-line").forEach((line) => {
+      const sel = line.querySelector("select[name='product_id']");
+      const qty = Number(line.querySelector("input[name='quantity']").value || "0");
+      const price = Number((sel.selectedOptions[0]?.dataset?.price || "0"));
+      const lineTotal = price * Math.max(0, qty);
+      grand += lineTotal;
+      line.querySelector(".line-total").textContent = "$" + lineTotal.toFixed(2);
+    });
+    totalEl.textContent = "$" + grand.toFixed(2);
+  };
+
+  addBtn.addEventListener("click", () => {
+    linesRoot.appendChild(lineTemplate());
+    recalc();
+  });
+  linesRoot.addEventListener("change", recalc);
+  linesRoot.addEventListener("input", recalc);
+  recalc();
+})();
+</script>
 {% endblock %}

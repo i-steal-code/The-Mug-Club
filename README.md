@@ -2,7 +2,7 @@
 
 Operations dashboard for inventory, orders, finance, tasks, and recipes.
 
-**Status: v0.2.1 (development).**
+**Status: v0.2.2 (development).**
 
 ## Stack
 
@@ -48,7 +48,7 @@ Render free web services spin down after idle time. You cannot fully remove cold
 
 ## One-time data load (manual SQL-first)
 
-For `v0.2.1`, the import flow is intentionally SQL-first (Supabase SQL editor), not script-driven:
+For `v0.2.2`, the import flow is SQL-first (Supabase SQL editor), plus an in-app financial tracker importer:
 
 1. Manually normalize names in your CSVs first (for example: `heavy cream` vs `whipping cream`, `honey buttercream` naming).
 2. Open `database import/supabase_manual_insert.sql`.
@@ -56,12 +56,20 @@ For `v0.2.1`, the import flow is intentionally SQL-first (Supabase SQL editor), 
 
 This keeps ingestion simple and transparent with no extra runtime dependency/debug loop.
 
+### Financial tracker import
+
+Use **Finance → Import financial tracker CSV** to ingest
+`database import/3_The Mug Club_Financials - Financial Tracker.csv`.
+The importer separates cash inflow / outflow side-by-side tables, skips non-standard header/preamble rows, and cleans dates/amounts before insertion.
+
 ## Structured ordering model
 
 - Orders are now product-based via `products` + `order_items` tables (not free-text order blobs).
 - Customer and employee order forms use fixed dropdown selections for products.
-- Product naming conventions are editable in-app at the **Products** page.
-- Recipe ingredient rows now select ingredients from inventory via dropdown.
+- Product naming conventions and flavour dropdown options are editable in-app at **Products + Recipes**.
+- Products and recipes are merged: each product can own one recipe card and computed margin estimate.
+- Recipe cards now support component-level prep checklist, component steps, and final assembly steps with remarks.
+- Shop page supports multi-line interactive cart, placeholder product images, and PayNow QR placeholder block.
 
 Each dashboard list page links to **Export CSV** for relevant tables.
 

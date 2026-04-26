@@ -5,6 +5,9 @@
 <p class="subtitle">Cash inflows and outflows from the financial tracker, plus margin datasheet views. Link inflows to <a href="{{ url_for('orders_list') }}">orders</a> for reconciliation.</p>
 
 <div class="header-actions" style="margin: 16px 0 24px;">
+  <form method="post" action="{{ url_for('finance_import_tracker') }}" class="inline">
+    <button class="btn" type="submit">Import financial tracker CSV</button>
+  </form>
   <a class="btn ghost" href="{{ url_for('export_table', name='finance_inflows') }}">Export inflows CSV</a>
   <a class="btn ghost" href="{{ url_for('export_table', name='finance_outflows') }}">Export outflows CSV</a>
   <a class="btn ghost" href="{{ url_for('export_table', name='margin_menu_items') }}">Export menu margins CSV</a>
@@ -140,6 +143,34 @@
     </tr>
   {% else %}
     <tr><td colspan="5">No ingredient margin rows.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<h2>Product margin snapshots (from recipe + inventory source cost)</h2>
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Product</th>
+      <th>Selling price ($)</th>
+      <th>Ingredient cost/cup ($ est)</th>
+      <th>Margin/cup ($ est)</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for p in product_margins %}
+    <tr>
+      <td><strong>{{ p.product_name }}</strong></td>
+      <td>{% if p.selling_price is not none %}{{ '%.2f' % p.selling_price }}{% else %}—{% endif %}</td>
+      <td>{{ '%.4f' % (p.ingredient_cost_per_cup or 0) }}</td>
+      <td>
+        {% if p.selling_price is not none %}
+          {{ '%.4f' % (p.selling_price - (p.ingredient_cost_per_cup or 0)) }}
+        {% else %}—{% endif %}
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="4">No products/recipes linked yet.</td></tr>
   {% endfor %}
   </tbody>
 </table>
