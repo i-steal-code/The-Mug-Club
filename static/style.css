@@ -310,6 +310,9 @@ h2 { font-size: 20px; margin-top: 28px; color: var(--secondary-dark); }
 .morph-btn.pay-unpaid      { background: #fee2e2; color: #991b1b; border-color: #fca5a5; }
 .morph-btn.pay-paid        { background: #dcfce7; color: #166534; border-color: #4ade80; }
 .morph-btn.pay-refunded    { background: #e5e7eb; color: #374151; border-color: #9ca3af; }
+.morph-btn.task-not-started { background: #f3f4f6; color: #374151; border-color: #d1d5db; }
+.morph-btn.task-in-progress { background: #dbeafe; color: #1e40af; border-color: #60a5fa; }
+.morph-btn.task-completed   { background: #dcfce7; color: #166534; border-color: #4ade80; }
 
 /* Product-card radio picker on the shop page (v0.2.3). Each radio becomes a
    large tappable card; the standalone menu snapshot grid is gone. */
@@ -400,6 +403,7 @@ h2 { font-size: 20px; margin-top: 28px; color: var(--secondary-dark); }
 }
 .finance-pane { min-width: 0; }
 .finance-pane .data-table { font-size: 13px; }
+.table-wrap { width: 100%; overflow-x: auto; }
 
 @media (max-width: 720px) {
   .nav a { font-size: 13px; }

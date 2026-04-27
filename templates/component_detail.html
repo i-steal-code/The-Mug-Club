@@ -15,7 +15,15 @@
       <input type="text" name="name" value="{{ component.name }}" required maxlength="120">
     </label>
     <label>Type
-      <input type="text" name="component_type" value="{{ component.component_type or '' }}" maxlength="80">
+      <select name="component_type">
+        <option value="">Select existing type</option>
+        {% for t in component_types %}
+          <option value="{{ t }}" {% if component.component_type == t %}selected{% endif %}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>New type (optional)
+      <input type="text" name="component_type_new" maxlength="80" placeholder="Type to create new type">
     </label>
     <label>Base yield
       <input type="number" name="base_yield" min="0.25" step="any" value="{{ component.base_yield or 1 }}">

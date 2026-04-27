@@ -52,12 +52,12 @@
       <td><span class="pill p-{{ t.priority|lower }}">{{ t.priority }}</span></td>
       <td><span class="pill s-{{ t.status|replace(' ','-')|lower }}">{{ t.status }}</span></td>
       <td class="actions">
-        <form method="post" action="{{ url_for('tasks_update_status', task_id=t.id) }}" class="inline">
-          <select name="status" onchange="this.form.submit()">
-            {% for s in statuses %}
-              <option value="{{ s }}" {% if t.status == s %}selected{% endif %}>{{ s }}</option>
-            {% endfor %}
-          </select>
+        <form method="post" action="{{ url_for('tasks_advance_status', task_id=t.id) }}" class="inline">
+          <button type="submit"
+                  class="btn small morph-btn task-{{ (t.status or 'Not Started')|replace(' ','-')|lower }}"
+                  title="Click to advance task status">
+            {{ t.status }}
+          </button>
         </form>
         <form method="post" action="{{ url_for('tasks_delete', task_id=t.id) }}" class="inline"
               onsubmit="return confirm('Delete this task?');">

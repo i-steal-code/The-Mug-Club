@@ -20,10 +20,15 @@
       <input type="text" name="name" required maxlength="120" placeholder="e.g. Matcha cloud">
     </label>
     <label>Component type
-      <input type="text" name="component_type" maxlength="80" list="component-type-suggestions" placeholder="e.g. cloud, syrup, base">
-      <datalist id="component-type-suggestions">
-        {% for t in component_types %}<option value="{{ t }}">{% endfor %}
-      </datalist>
+      <select name="component_type">
+        <option value="">Select existing type</option>
+        {% for t in component_types %}
+          <option value="{{ t }}">{{ t }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>New type (optional)
+      <input type="text" name="component_type_new" maxlength="80" placeholder="Type to create new type">
     </label>
     <label>Base yield (per recipe)
       <input type="number" name="base_yield" min="0.25" step="any" value="1">

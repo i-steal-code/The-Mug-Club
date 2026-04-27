@@ -129,109 +129,39 @@
 })();
 </script>
 
-<h2>Component list</h2>
-{% if components %}
+<h2>Ingredient preparation checklist</h2>
+{% if ingredient_prep_rows %}
 <table class="data-table">
-  <thead><tr><th>Component</th><th>Remarks</th></tr></thead>
+  <thead>
+    <tr><th>Ingredient / component</th><th>Prep state</th></tr>
+  </thead>
   <tbody>
-  {% for c in components %}
-    <tr><td><strong>{{ c.component_name }}</strong></td><td class="desc">{{ c.remarks or '—' }}</td></tr>
+  {% for p in ingredient_prep_rows %}
+    <tr>
+      <td><strong>{{ p.label }}</strong></td>
+      <td>
+        {% if p.state == 'ready' %}
+          <span class="pill ok">Ready</span>
+        {% elif p.state == 'short' %}
+          <span class="pill danger">Short</span>
+        {% else %}
+          <span class="pill">Component</span>
+        {% endif %}
+      </td>
+    </tr>
   {% endfor %}
   </tbody>
 </table>
 {% else %}
-<p class="subtitle">No components yet.</p>
-{% endif %}
-
-<form method="post" class="form-card">
-  <input type="hidden" name="action" value="add_component">
-  <div class="row">
-    <label>Component name
-      <input type="text" name="component_name" required placeholder="e.g. Matcha cloud">
-    </label>
-    <label>Component remarks
-      <input type="text" name="component_remarks" placeholder="prep tools / timing / warnings">
-    </label>
-  </div>
-  <div class="form-actions"><button class="btn" type="submit">Add component</button></div>
-</form>
-
-<h2>Ingredient preparation checklist</h2>
-{% if prep_rows %}
-<ul class="step-list">
-  {% for p in prep_rows %}
-  <li class="step-item {% if p.done %}step-done{% endif %}">
-    <form method="post" action="{{ url_for('recipe_prep_toggle', recipe_id=recipe.id, prep_id=p.id) }}" class="inline">
-      <button type="submit" class="btn ghost">{% if p.done %}✓ Done{% else %}Mark done{% endif %}</button>
-    </form>
-    <span class="step-body"><strong>[{{ p.component_name }}]</strong> {{ p.prep_name }}{% if p.remarks %} — {{ p.remarks }}{% endif %}</span>
-  </li>
-  {% endfor %}
-</ul>
-{% else %}
 <p class="subtitle">No preparation checklist rows yet.</p>
 {% endif %}
 
-<form method="post" class="form-card">
-  <input type="hidden" name="action" value="add_component_prep">
-  <div class="row">
-    <label>Component
-      <select name="component_id" required>
-        <option value="">Select component</option>
-        {% for c in components %}<option value="{{ c.id }}">{{ c.component_name }}</option>{% endfor %}
-      </select>
-    </label>
-    <label>Prep checkpoint
-      <input type="text" name="prep_name" required placeholder="e.g. sift powder">
-    </label>
-  </div>
-  <label>Prep remarks
-    <input type="text" name="prep_remarks" placeholder="safety / quality notes">
-  </label>
-  <div class="form-actions"><button class="btn" type="submit">Add prep checkpoint</button></div>
-</form>
-
-<h2>Component steps</h2>
-{% if component_steps %}
+<h2>Product recipe steps</h2>
+{% if merged_steps %}
 <ul class="step-list">
-  {% for s in component_steps %}
+{% for s in merged_steps %}
   <li class="step-item {% if s.done %}step-done{% endif %}">
-    <form method="post" action="{{ url_for('recipe_component_step_toggle', recipe_id=recipe.id, step_id=s.id) }}" class="inline">
-      <button type="submit" class="btn ghost">{% if s.done %}✓ Done{% else %}Mark done{% endif %}</button>
-    </form>
-    <span class="step-body"><strong>[{{ s.component_name }}]</strong> {{ s.step_name }}{% if s.remarks %} — {{ s.remarks }}{% endif %}</span>
-  </li>
-  {% endfor %}
-</ul>
-{% else %}
-<p class="subtitle">No component steps yet.</p>
-{% endif %}
-
-<form method="post" class="form-card">
-  <input type="hidden" name="action" value="add_component_step">
-  <div class="row">
-    <label>Component
-      <select name="component_id" required>
-        <option value="">Select component</option>
-        {% for c in components %}<option value="{{ c.id }}">{{ c.component_name }}</option>{% endfor %}
-      </select>
-    </label>
-    <label>Step
-      <input type="text" name="step_name" required placeholder="e.g. whisk until cloud texture">
-    </label>
-  </div>
-  <label>Step remarks
-    <input type="text" name="step_remarks" placeholder="timing / caution / expected output">
-  </label>
-  <div class="form-actions"><button class="btn" type="submit">Add component step</button></div>
-</form>
-
-<h2>Final assembly steps</h2>
-{% if assembly_steps %}
-<ul class="step-list">
-{% for s in assembly_steps %}
-  <li class="step-item {% if s.done %}step-done{% endif %}">
-    <form method="post" action="{{ url_for('recipe_assembly_step_toggle', recipe_id=recipe.id, step_id=s.id) }}" class="inline">
+    <form method="post" action="{% if s.kind == 'legacy' %}{{ url_for('recipe_step_toggle', recipe_id=recipe.id, step_id=s.id) }}{% else %}{{ url_for('recipe_assembly_step_toggle', recipe_id=recipe.id, step_id=s.id) }}{% endif %}" class="inline">
       <button type="submit" class="btn ghost">{% if s.done %}✓ Done{% else %}Mark done{% endif %}</button>
     </form>
     <span class="step-body">{{ s.step_name }}{% if s.remarks %} — {{ s.remarks }}{% endif %}</span>
@@ -239,44 +169,17 @@
 {% endfor %}
 </ul>
 {% else %}
-<p class="subtitle">No final assembly steps yet.</p>
+<p class="subtitle">No product recipe steps yet.</p>
 {% endif %}
 
 <form method="post" class="form-card">
   <input type="hidden" name="action" value="add_assembly_step">
-  <label>Assembly step
+  <label>Step
     <input type="text" name="step_name" required placeholder="e.g. pour cloud over spoon and serve">
   </label>
-  <label>Assembly remarks
+  <label>Step remarks
     <input type="text" name="step_remarks" placeholder="service note / presentation note">
   </label>
-  <div class="form-actions"><button class="btn primary" type="submit">Add assembly step</button></div>
-</form>
-
-<h2>Legacy simple steps</h2>
-<ul class="step-list">
-{% for s in steps %}
-  <li class="step-item {% if s.completed %}step-done{% endif %}">
-    <form method="post" action="{{ url_for('recipe_step_toggle', recipe_id=recipe.id, step_id=s.id) }}" class="inline">
-      {% if preserve_desired_cups %}<input type="hidden" name="desired_cups" value="{{ preserve_desired_cups }}">{% endif %}
-      <button type="submit" class="btn ghost">{% if s.completed %}✓ Done{% else %}Mark done{% endif %}</button>
-    </form>
-    <span class="step-body">{{ s.body }}</span>
-  </li>
-{% else %}
-  <li class="subtitle">No steps yet.</li>
-{% endfor %}
-</ul>
-
-<h3>Add step</h3>
-<form method="post" class="form-card">
-  <input type="hidden" name="action" value="add_step">
-  {% if preserve_desired_cups %}<input type="hidden" name="desired_cups" value="{{ preserve_desired_cups }}">{% endif %}
-  <label>Step text
-    <textarea name="body" rows="3" required placeholder="One clear instruction per step…"></textarea>
-  </label>
-  <div class="form-actions">
-    <button class="btn primary" type="submit">Add step</button>
-  </div>
+  <div class="form-actions"><button class="btn primary" type="submit">Add step</button></div>
 </form>
 {% endblock %}

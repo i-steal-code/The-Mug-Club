@@ -32,6 +32,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
 TASK_STATUSES = ["Not Started", "In Progress", "Completed"]
+TASK_STATUS_CYCLE = ["Not Started", "In Progress", "Completed"]
+TASK_STATUS_CYCLE = ["Not Started", "In Progress", "Completed"]
 TASK_PRIORITIES = ["Low", "Medium", "High"]
 ORDER_STATUSES = ["Pending", "Processing", "Completed", "Cancelled"]
 PAYMENT_STATUSES = ["Unpaid", "Paid", "Refunded"]
@@ -239,15 +241,7 @@ _SCHEMA_MIGRATION_DDL = [
     "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS source_cost DOUBLE PRECISION",
     "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS source_qty_g DOUBLE PRECISION",
     "ALTER TABLE inventory_items ADD COLUMN IF NOT EXISTS supplier TEXT",
-    "ALTER TABLE finance_cash_inflows ADD COLUMN IF NOT EXISTS linked_order_id INTEGER",
-    """
-    DO $$ BEGIN
-      ALTER TABLE finance_cash_inflows
-        ADD CONSTRAINT finance_cash_inflows_linked_order_id_fkey
-        FOREIGN KEY (linked_order_id) REFERENCES orders(id) ON DELETE SET NULL;
-    EXCEPTION WHEN duplicate_object THEN NULL;
-    END $$
-    """,
+    "ALTER TABLE finance_cash_inflows DROP COLUMN IF EXISTS linked_order_id",
     """
     CREATE TABLE IF NOT EXISTS recipe_steps (
         id SERIAL PRIMARY KEY,
@@ -890,6 +884,13 @@ def _split_inflow_line(description: str | None) -> tuple[str | None, list[tuple[
     return customer, items
 
 
+def _name_key(value: str | None) -> str:
+    """Case/spacing-insensitive key used for name normalization."""
+    if not value:
+        return ""
+    return re.sub(r"\s+", " ", value).strip().lower()
+
+
 def import_financial_csv(stream, replace: bool = False) -> tuple[int, int]:
     """
     Parse the raw Google-Sheets financial tracker CSV.
@@ -992,10 +993,16 @@ def import_financial_csv(stream, replace: bool = False) -> tuple[int, int]:
     try:
         with conn:
             with conn.cursor() as cur:
+                cur.execute("SELECT product_name FROM products WHERE product_name IS NOT NULL")
+                canonical_products = {
+                    _name_key(r["product_name"]): r["product_name"] for r in (cur.fetchall() or [])
+                }
                 if replace:
                     cur.execute("DELETE FROM finance_cash_outflows")
                     cur.execute("DELETE FROM finance_cash_inflows")
                 for t in inflows:
+                    txn_no, amount, desc, cups, txn_date, shot, pic, customer_name, product_name, pay_type, pay_status = t
+                    product_name = canonical_products.get(_name_key(product_name), product_name)
                     cur.execute(
                         """
                         INSERT INTO finance_cash_inflows
@@ -1004,7 +1011,19 @@ def import_financial_csv(stream, replace: bool = False) -> tuple[int, int]:
                            payment_type, payment_status)
                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         """,
-                        t,
+                        (
+                            txn_no,
+                            amount,
+                            desc,
+                            cups,
+                            txn_date,
+                            shot,
+                            pic,
+                            customer_name,
+                            product_name,
+                            pay_type,
+                            pay_status,
+                        ),
                     )
                 for t in outflows:
                     cur.execute(
@@ -1187,7 +1206,6 @@ def tasks_list():
         members=members,
         selected_member=member_id,
         keyword=keyword,
-        statuses=TASK_STATUSES,
     )
 
 
@@ -1225,6 +1243,21 @@ def tasks_update_status(task_id):
     else:
         flash("Invalid status.", "error")
     return redirect(request.referrer or url_for("tasks_list"))
+
+
+@app.post("/tasks/<int:task_id>/advance-status")
+def tasks_advance_status(task_id):
+    row = query(
+        "SELECT status FROM tasks WHERE id = %s",
+        (task_id,),
+        fetch=True,
+        one=True,
+    )
+    if not row:
+        abort(404)
+    nxt = _cycle_next(row["status"], TASK_STATUS_CYCLE)
+    query("UPDATE tasks SET status = %s WHERE id = %s", (nxt, task_id))
+    return redirect(url_for("tasks_list"))
 
 
 @app.route("/tasks/<int:task_id>/delete", methods=["POST"])
@@ -1414,11 +1447,19 @@ def _push_order_to_finance_if_done(order_id: int) -> None:
     try:
         with conn:
             with conn.cursor() as cur:
+                cur.execute("SELECT product_name FROM products WHERE product_name IS NOT NULL")
+                canonical_products = {
+                    _name_key(r["product_name"]): r["product_name"] for r in (cur.fetchall() or [])
+                }
                 for it in items:
                     amt = (
                         float(it["unit_price"]) * int(it["quantity"])
                         if it.get("unit_price") is not None
                         else None
+                    )
+                    product_name = canonical_products.get(
+                        _name_key(it.get("product_name")),
+                        it.get("product_name"),
                     )
                     cur.execute(
                         """
@@ -1433,7 +1474,7 @@ def _push_order_to_finance_if_done(order_id: int) -> None:
                             int(it["quantity"]),
                             order.get("order_date") or date.today(),
                             order["customer_name"],
-                            it["product_name"],
+                            product_name,
                             pay_type,
                             "paid",
                         ),
@@ -1660,9 +1701,17 @@ def finance_summary():
     )
     inflows = query(
         """
-        SELECT *
-        FROM finance_cash_inflows
-        ORDER BY txn_date NULLS LAST, id
+        SELECT
+            f.*,
+            COALESCE(
+              p.product_name,
+              f.product_name
+            ) AS product_name_canonical
+        FROM finance_cash_inflows f
+        LEFT JOIN products p
+          ON lower(regexp_replace(trim(COALESCE(f.product_name, '')), '\\s+', ' ', 'g'))
+           = lower(regexp_replace(trim(COALESCE(p.product_name, '')), '\\s+', ' ', 'g'))
+        ORDER BY f.txn_date NULLS LAST, f.id
         """,
         fetch=True,
     )
@@ -1760,24 +1809,7 @@ def recipe_detail(recipe_id):
 
     if request.method == "POST":
         action = request.form.get("action")
-        if action == "add_step":
-            body = request.form.get("body", "").strip()
-            if body:
-                so = request.form.get("step_order", type=int)
-                if so is None:
-                    r = query(
-                        "SELECT COALESCE(MAX(step_order), -1) + 1 AS n FROM recipe_steps WHERE recipe_id = %s",
-                        (recipe_id,),
-                        fetch=True,
-                        one=True,
-                    )
-                    so = r["n"]
-                query(
-                    "INSERT INTO recipe_steps (recipe_id, step_order, body) VALUES (%s, %s, %s)",
-                    (recipe_id, so, body),
-                )
-                flash("Step added.", "success")
-        elif action == "add_ingredient":
+        if action == "add_ingredient":
             # Source of the line: inventory item OR reusable component (v0.2.3).
             source = (request.form.get("source") or "inventory").strip()
             inventory_item_id = request.form.get("inventory_item_id", type=int)
@@ -1803,15 +1835,38 @@ def recipe_detail(recipe_id):
                         one=True,
                     )
                     so = r["n"]
-                query(
-                    """
-                    INSERT INTO recipe_ingredients
-                      (recipe_id, sort_order, inventory_item_id, component_id, label_override, qty_per_yield, unit)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s)
-                    """,
-                    (recipe_id, so, inventory_item_id, component_id, label_override, qty, unit),
-                )
-                flash("Ingredient line added.", "success")
+                try:
+                    query(
+                        """
+                        INSERT INTO recipe_ingredients
+                          (recipe_id, sort_order, inventory_item_id, component_id, label_override, qty_per_yield, unit)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s)
+                        """,
+                        (recipe_id, so, inventory_item_id, component_id, label_override, qty, unit),
+                    )
+                    flash("Ingredient line added.", "success")
+                except psycopg2.Error as exc:
+                    # Backward-compatible fallback for older DBs that do not yet have
+                    # recipe_ingredients.component_id (legacy schema on some deploys).
+                    if getattr(exc, "pgcode", None) == "42703":
+                        if component_id:
+                            flash(
+                                "This database schema is outdated for component ingredient lines. "
+                                "Please run the latest schema migration.",
+                                "error",
+                            )
+                        else:
+                            query(
+                                """
+                                INSERT INTO recipe_ingredients
+                                  (recipe_id, sort_order, inventory_item_id, label_override, qty_per_yield, unit)
+                                VALUES (%s,%s,%s,%s,%s,%s)
+                                """,
+                                (recipe_id, so, inventory_item_id, label_override, qty, unit),
+                            )
+                            flash("Ingredient line added.", "success")
+                    else:
+                        raise
         elif action == "set_yield":
             try:
                 by = float(request.form.get("base_yield_cups") or 1)
@@ -1821,53 +1876,6 @@ def recipe_detail(recipe_id):
                 by = 1.0
             query("UPDATE recipes SET base_yield_cups = %s WHERE id = %s", (by, recipe_id))
             flash("Base yield updated.", "success")
-        elif action == "add_component":
-            cname = request.form.get("component_name", "").strip()
-            cremarks = request.form.get("component_remarks", "").strip() or None
-            if cname:
-                so = query(
-                    "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM recipe_components WHERE recipe_id = %s",
-                    (recipe_id,),
-                    fetch=True,
-                    one=True,
-                )["n"]
-                query(
-                    "INSERT INTO recipe_components (recipe_id, component_name, remarks, sort_order) VALUES (%s,%s,%s,%s)",
-                    (recipe_id, cname, cremarks, so),
-                )
-                flash("Component added.", "success")
-        elif action == "add_component_prep":
-            cid = request.form.get("component_id", type=int)
-            pname = request.form.get("prep_name", "").strip()
-            premarks = request.form.get("prep_remarks", "").strip() or None
-            if cid and pname:
-                so = query(
-                    "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM recipe_component_prep WHERE component_id = %s",
-                    (cid,),
-                    fetch=True,
-                    one=True,
-                )["n"]
-                query(
-                    "INSERT INTO recipe_component_prep (component_id, prep_name, remarks, sort_order) VALUES (%s,%s,%s,%s)",
-                    (cid, pname, premarks, so),
-                )
-                flash("Prep checkpoint added.", "success")
-        elif action == "add_component_step":
-            cid = request.form.get("component_id", type=int)
-            sname = request.form.get("step_name", "").strip()
-            sremarks = request.form.get("step_remarks", "").strip() or None
-            if cid and sname:
-                so = query(
-                    "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM recipe_component_steps WHERE component_id = %s",
-                    (cid,),
-                    fetch=True,
-                    one=True,
-                )["n"]
-                query(
-                    "INSERT INTO recipe_component_steps (component_id, step_name, remarks, sort_order) VALUES (%s,%s,%s,%s)",
-                    (cid, sname, sremarks, so),
-                )
-                flash("Component step added.", "success")
         elif action == "add_assembly_step":
             sname = request.form.get("step_name", "").strip()
             sremarks = request.form.get("step_remarks", "").strip() or None
@@ -1888,11 +1896,6 @@ def recipe_detail(recipe_id):
     desired = request.values.get("desired_cups", type=float)
     factor = _recipe_scale_factor(recipe, desired)
 
-    steps = query(
-        "SELECT * FROM recipe_steps WHERE recipe_id = %s ORDER BY step_order, id",
-        (recipe_id,),
-        fetch=True,
-    )
     ingredients = query(
         """
         SELECT ri.*,
@@ -1914,30 +1917,8 @@ def recipe_detail(recipe_id):
         fetch=True,
     )
     components_lookup = list_components()
-    components = query(
-        "SELECT * FROM recipe_components WHERE recipe_id = %s ORDER BY sort_order, id",
-        (recipe_id,),
-        fetch=True,
-    ) or []
-    prep_rows = query(
-        """
-        SELECT rp.*, rc.component_name
-        FROM recipe_component_prep rp
-        JOIN recipe_components rc ON rc.id = rp.component_id
-        WHERE rc.recipe_id = %s
-        ORDER BY rc.sort_order, rp.sort_order, rp.id
-        """,
-        (recipe_id,),
-        fetch=True,
-    ) or []
-    component_steps = query(
-        """
-        SELECT rs.*, rc.component_name
-        FROM recipe_component_steps rs
-        JOIN recipe_components rc ON rc.id = rs.component_id
-        WHERE rc.recipe_id = %s
-        ORDER BY rc.sort_order, rs.sort_order, rs.id
-        """,
+    legacy_steps = query(
+        "SELECT id, body, completed FROM recipe_steps WHERE recipe_id = %s ORDER BY step_order, id",
         (recipe_id,),
         fetch=True,
     ) or []
@@ -1967,20 +1948,33 @@ def recipe_detail(recipe_id):
         )
         enriched.append(row)
 
+    ingredient_prep_rows = [
+        {
+            "label": ing["display_name"],
+            "state": (
+                "component"
+                if ing["source_kind"] == "component"
+                else ("ready" if ing["stock_ok"] else "short")
+            ),
+        }
+        for ing in enriched
+    ]
+    merged_steps = (
+        [{"id": s["id"], "step_name": s["step_name"], "remarks": s.get("remarks"), "done": s["done"], "kind": "assembly"} for s in assembly_steps]
+        + [{"id": s["id"], "step_name": s["body"], "remarks": None, "done": s["completed"], "kind": "legacy"} for s in legacy_steps]
+    )
+
     return render_template(
         "recipe_detail.html",
         recipe=recipe,
-        steps=steps or [],
         ingredients=enriched,
         factor=factor,
         desired_output=float(desired) if desired is not None else float(recipe.get("base_yield_cups") or 1),
         preserve_desired_cups=dc_raw,
         inventory_items=inventory_items or [],
-        components=components,
         components_lookup=components_lookup,
-        prep_rows=prep_rows,
-        component_steps=component_steps,
-        assembly_steps=assembly_steps,
+        ingredient_prep_rows=ingredient_prep_rows,
+        merged_steps=merged_steps,
     )
 
 
@@ -2048,7 +2042,11 @@ def list_components():
 def components_page():
     if request.method == "POST":
         name = request.form.get("name", "").strip()
-        component_type = request.form.get("component_type", "").strip() or None
+        component_type = (
+            request.form.get("component_type_new", "").strip()
+            or request.form.get("component_type", "").strip()
+            or None
+        )
         notes = request.form.get("notes", "").strip() or None
         try:
             base_yield = float(request.form.get("base_yield") or 1)
@@ -2103,7 +2101,11 @@ def component_detail(component_id):
         action = request.form.get("action")
         if action == "save_meta":
             name = request.form.get("name", "").strip()
-            ctype = request.form.get("component_type", "").strip() or None
+            ctype = (
+                request.form.get("component_type_new", "").strip()
+                or request.form.get("component_type", "").strip()
+                or None
+            )
             notes = request.form.get("notes", "").strip() or None
             try:
                 by = float(request.form.get("base_yield") or 1)
@@ -2196,12 +2198,17 @@ def component_detail(component_id):
         "SELECT id, item_name FROM inventory_items ORDER BY item_name",
         fetch=True,
     ) or []
+    component_types = query(
+        "SELECT DISTINCT component_type FROM components WHERE component_type IS NOT NULL ORDER BY 1",
+        fetch=True,
+    ) or []
     return render_template(
         "component_detail.html",
         component=comp,
         ingredients=ingredients,
         steps=steps,
         inventory_items=inventory_items,
+        component_types=[r["component_type"] for r in component_types],
     )
 
 
@@ -2328,10 +2335,11 @@ def analytics_page():
         """
         SELECT customer_name,
                COUNT(*)::int AS order_count,
-               COALESCE(SUM(cup_count), 0)::int AS cups
-        FROM orders
+               COALESCE(SUM(quantity_cups), 0)::int AS cups
+        FROM finance_cash_inflows
+        WHERE customer_name IS NOT NULL
         GROUP BY customer_name
-        ORDER BY order_count DESC, cups DESC
+        ORDER BY cups DESC, order_count DESC
         LIMIT 20
         """,
         fetch=True,
@@ -2346,9 +2354,11 @@ def analytics_page():
     )
     orders_by_weekday = query(
         """
-        SELECT EXTRACT(ISODOW FROM COALESCE(order_date, created_at::date))::int AS dow,
-               COUNT(*)::int AS n
-        FROM orders
+        SELECT EXTRACT(ISODOW FROM txn_date)::int AS dow,
+               COUNT(*)::int AS n,
+               COALESCE(SUM(amount), 0)::float AS revenue
+        FROM finance_cash_inflows
+        WHERE txn_date IS NOT NULL
         GROUP BY dow ORDER BY dow
         """,
         fetch=True,
@@ -2365,11 +2375,17 @@ def analytics_page():
     )
     top_products = query(
         """
-        SELECT p.product_name, SUM(oi.quantity)::int AS cups
-        FROM order_items oi
-        JOIN products p ON p.id = oi.product_id
-        GROUP BY p.product_name
-        ORDER BY cups DESC, p.product_name
+        SELECT
+          COALESCE(p.product_name, f.product_name, '—') AS product_name,
+          COALESCE(SUM(f.quantity_cups), 0)::int AS cups,
+          COALESCE(SUM(f.amount), 0)::float AS revenue
+        FROM finance_cash_inflows f
+        LEFT JOIN products p
+          ON lower(regexp_replace(trim(COALESCE(f.product_name, '')), '\\s+', ' ', 'g'))
+           = lower(regexp_replace(trim(COALESCE(p.product_name, '')), '\\s+', ' ', 'g'))
+        WHERE COALESCE(p.product_name, f.product_name) IS NOT NULL
+        GROUP BY 1
+        ORDER BY cups DESC, revenue DESC, product_name
         LIMIT 20
         """,
         fetch=True,

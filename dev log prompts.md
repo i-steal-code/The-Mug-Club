@@ -466,3 +466,17 @@ patches:
 
 notes:
 ensure all data is consistent and normalised properly
+
+v0.2.4
+1. re-normalise all product names in the finance table and integrate the orders into analytics. currently, the finance table is not displaying order data from the finance table properly
+2. give the same "morphing buttons" feature in the tasks page
+3. continue renovation of recipe databank with tweaks to components page to make everything work; 
+    a. component type should be dropdown menu with currently registered component types. new component type can be created by typing in to the text input
+    b. make current items in the product table modifiable products
+    c. attempting to add an inventory item into the ingredient lines for a product recipe results in error 500
+    d. component list, ingredient prep checklist and component steps are not required in the product recipe creation. components are handled similarly to inventory items in this context. ingredient prep checklist should be moved to underneath the ingredient list and prep checkpoint should be removed. if prep checkpoint is deemed necessary, explain its functionality in full detail in this chat
+    e. remove legacy simple steps
+    f. final assembly steps and steps for product recipe are the same thing; merge the 2
+4. finance tables are overlapping each other; ensure UI formatting is prim and proper
+
+v0.2.5
