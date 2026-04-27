@@ -480,3 +480,19 @@ v0.2.4
 4. finance tables are overlapping each other; ensure UI formatting is prim and proper
 
 v0.2.5
+1. updated finance sheet .csv to be imported, parse and prepare for import to database
+2. schema sql returns error claiming that "linked order ID" does not exist
+3. add simple auth for security; create a login page upon entry to website, currently only requires a password (same default password for all staff) 
+4. add cookies features to track users by device (foundation for other security and public viewing features)
+5. all currently registered products do not have a recipe created for them in the database that is modifiable in the recipe databank. modify/create new manual insertion SQL query to add the missing data in the database. i will key in recipe steps for every product currently listed manually. 
+6. error 500 still occurs when trying to add components/ingredients into a product recipe ingredient list, likely since the v0.2.4 schema could not be run due to the bug. however, re-check the logic to ensure that the ingredient/component adding does not crash in v0.2.5
+7. add an "ingredient prep" field in every ingredient/component to be added to a product recipe. add the field contents + ingredient/component it is associated with in the ingredient prep list and leave it as a checklist. if the field is empty, there is nothing to be done for ingredient prep on that particular ingredient. 
+8. the status button in the tasks sheet should morph, not change based on the actions buttons. rework the buttons such that only the status button is clicked and morphed. 
+9. lay the groundwork for the prep components display in dashboard; here is a breakdown of how the math and logic of the relationships work for this feature
+    a. every week, a number (qty to prep) is determined based on human insight from analytics, keyed into the prep components dashboard table 
+    b. matcha and coffee lattes are split into their 2 respective components: "cloud" (matcha or coffee) and flavour (strawberry, mocha, honey buttercream, etc.). qty to prep for each flavour, how many portions of matcha/coffee are independent as flavours are commutative
+    c. match each component displayed to a real recipe component from the recipe databank and from components
+    d. add various pre-made components such as flavours in the inventory. a prep component's ready state depends on whether the ingredients required to produce the component listed can match the qty to prep. data on portioning of ingredients for each component can be found in the margins .csv (this data does not seem to have been included into the database)
+    e. you can infer and fill in the gaps for the things left unsaid
+
+v0.2.6

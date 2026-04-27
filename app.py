@@ -11,6 +11,7 @@ import io
 import ipaddress
 import os
 import re
+import secrets
 import socket
 import threading
 import time
@@ -18,7 +19,18 @@ from datetime import date, datetime
 from urllib.parse import parse_qs, unquote, urlparse
 
 import psycopg2
-from flask import Flask, Response, abort, flash, redirect, render_template, request, url_for
+from flask import (
+    Flask,
+    Response,
+    abort,
+    flash,
+    make_response,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
 from psycopg2 import OperationalError, extras
 from psycopg2.extensions import connection as PgConnection
 
@@ -31,8 +43,25 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
+# v0.2.5 — minimal shared-password auth. Single password for all staff; tracked
+# per device by a long-lived cookie. STAFF_PASSWORD env var overrides default.
+STAFF_PASSWORD = os.environ.get("STAFF_PASSWORD", "mugclub")
+DEVICE_COOKIE_NAME = "mc_device_id"
+DEVICE_COOKIE_MAX_AGE = 60 * 60 * 24 * 365  # 1 year
+# Public endpoints that bypass auth (login flow, health probes, customer shop,
+# static assets). Anything else requires session["authed"] == True.
+PUBLIC_ENDPOINTS = {
+    "static",
+    "login",
+    "login_submit",
+    "logout",
+    "healthz",
+    "warm",
+    "shop_order_form",
+    "shop_order_submit",
+}
+
 TASK_STATUSES = ["Not Started", "In Progress", "Completed"]
-TASK_STATUS_CYCLE = ["Not Started", "In Progress", "Completed"]
 TASK_STATUS_CYCLE = ["Not Started", "In Progress", "Completed"]
 TASK_PRIORITIES = ["Low", "Medium", "High"]
 ORDER_STATUSES = ["Pending", "Processing", "Completed", "Cancelled"]
@@ -432,6 +461,24 @@ _SCHEMA_MIGRATION_DDL = [
     # Orders get a "finance_pushed_at" stamp so completion → 1NF finance insert
     # only happens once, even if the buttons are re-clicked (idempotent).
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS finance_pushed_at TIMESTAMPTZ",
+    # v0.2.5 — per-ingredient prep note + checkbox state on each recipe line.
+    "ALTER TABLE recipe_ingredients ADD COLUMN IF NOT EXISTS prep_note TEXT",
+    "ALTER TABLE recipe_ingredients ADD COLUMN IF NOT EXISTS prep_done BOOLEAN NOT NULL DEFAULT FALSE",
+    # v0.2.5 — weekly prep plan groundwork for the dashboard prep components card.
+    """
+    CREATE TABLE IF NOT EXISTS prep_plan (
+        id              SERIAL PRIMARY KEY,
+        week_start      DATE,
+        component_id    INTEGER REFERENCES components(id) ON DELETE SET NULL,
+        component_label TEXT NOT NULL,
+        qty_to_prep     DOUBLE PRECISION NOT NULL DEFAULT 0,
+        notes           TEXT,
+        sort_order      INTEGER NOT NULL DEFAULT 0,
+        created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_prep_plan_component ON prep_plan(component_id)",
+    "CREATE INDEX IF NOT EXISTS idx_prep_plan_week ON prep_plan(week_start)",
 ]
 
 
@@ -493,6 +540,47 @@ def ensure_schema_only() -> None:
                     WHERE r.product_id IS NULL AND lower(trim(r.name)) = lower(trim(p.product_name))
                     """
                 )
+                # v0.2.5 — guarantee every product has a recipe row so the
+                # recipe databank exposes it for editing. Steps stay empty so
+                # operators fill them in by hand from the UI.
+                cur.execute(
+                    """
+                    INSERT INTO recipes
+                      (product_id, name, drink_category, is_latte, cloud_type, flavour_name, base_yield_cups, notes)
+                    SELECT
+                      p.id,
+                      p.product_name,
+                      CASE
+                        WHEN p.product_type = 'latte' AND p.cloud_type = 'matcha' THEN 'matcha latte'
+                        WHEN p.product_type = 'latte' AND p.cloud_type = 'coffee' THEN 'coffee latte'
+                        WHEN p.product_type = 'latte'                              THEN 'latte'
+                        ELSE                                                            'special'
+                      END,
+                      (p.product_type = 'latte'),
+                      p.cloud_type,
+                      COALESCE(p.flavour_name, ''),
+                      1,
+                      'Auto-seeded recipe row. Fill in ingredients + product recipe steps from the recipe databank.'
+                    FROM products p
+                    WHERE NOT EXISTS (SELECT 1 FROM recipes r WHERE r.product_id = p.id)
+                    """
+                )
+                # Seed cloud + flavour reusable components so prep dashboard
+                # has stable rows to map to from day one.
+                cur.execute(
+                    """
+                    INSERT INTO components (name, component_type, base_yield, notes)
+                    VALUES
+                      ('Matcha cloud',        'cloud',   1, 'Whisked matcha base for matcha lattes.'),
+                      ('Coffee cloud',        'cloud',   1, 'Brewed espresso shot for coffee lattes.'),
+                      ('Strawberry flavour',  'flavour', 1, 'Strawberry puree base for strawberry lattes / milk.'),
+                      ('Honey buttercream',   'flavour', 1, 'Honey + salted butter cream for buttercream drinks.'),
+                      ('Mocha flavour',       'flavour', 1, 'Cocoa-forward base for mocha drinks.'),
+                      ('Iced chocolate base', 'flavour', 1, 'Hot chocolate / iced chocolate base.'),
+                      ('Tiramisu cream',      'flavour', 1, 'Cream cheese + cream + ladyfinger setup for tiramisu cups.')
+                    ON CONFLICT (name) DO NOTHING
+                    """
+                )
     finally:
         conn.close()
 
@@ -513,6 +601,67 @@ def _require_database_url():
     if DATABASE_URL or request.endpoint in ("static", "healthz", "warm"):
         return None
     return render_template("setup.html"), 503
+
+
+@app.before_request
+def _require_login():
+    """
+    Gate every operations-side endpoint behind the shared staff password.
+    /shop and health probes stay public so customers can still place orders.
+    """
+    endpoint = request.endpoint or ""
+    if endpoint in PUBLIC_ENDPOINTS:
+        return None
+    if session.get("authed"):
+        return None
+    next_url = request.full_path if request.method == "GET" else url_for("dashboard")
+    return redirect(url_for("login", next=next_url))
+
+
+@app.after_request
+def _ensure_device_cookie(resp: Response) -> Response:
+    """
+    Stamp every response with a stable device id cookie when missing. Acts as the
+    foundation for per-device tracking (audit logs, public viewing, etc.).
+    """
+    if request.cookies.get(DEVICE_COOKIE_NAME):
+        return resp
+    device_id = secrets.token_urlsafe(16)
+    resp.set_cookie(
+        DEVICE_COOKIE_NAME,
+        device_id,
+        max_age=DEVICE_COOKIE_MAX_AGE,
+        httponly=True,
+        samesite="Lax",
+    )
+    return resp
+
+
+@app.get("/login")
+def login():
+    if session.get("authed"):
+        return redirect(url_for("dashboard"))
+    return render_template("login.html", error=None)
+
+
+@app.post("/login")
+def login_submit():
+    pw = (request.form.get("password") or "").strip()
+    if pw and secrets.compare_digest(pw, STAFF_PASSWORD):
+        session["authed"] = True
+        session["device_id"] = request.cookies.get(DEVICE_COOKIE_NAME) or secrets.token_urlsafe(16)
+        nxt = (request.args.get("next") or request.form.get("next") or "").strip()
+        if nxt and nxt.startswith("/"):
+            return redirect(nxt)
+        return redirect(url_for("dashboard"))
+    return render_template("login.html", error="Wrong password — try again."), 401
+
+
+@app.post("/logout")
+def logout():
+    session.clear()
+    flash("Signed out.", "success")
+    return redirect(url_for("login"))
 
 
 @app.get("/healthz")
@@ -891,6 +1040,49 @@ def _name_key(value: str | None) -> str:
     return re.sub(r"\s+", " ", value).strip().lower()
 
 
+def _name_key_variants(value: str | None) -> list[str]:
+    """
+    Yield reasonable canonicalisation candidates for a free-typed product name.
+    The financial CSV from the field uses inconsistent forms — pluralised
+    ("strawberry matcha lattes"), reordered ("Honey Matcha Latte" vs.
+    "Matcha Honey Buttercream Latte") — so we try a small set of normalised
+    keys so the products table can match what was actually typed.
+    """
+    base = _name_key(value)
+    if not base:
+        return []
+    out: list[str] = [base]
+    # Trailing plural "s" — "lattes" → "latte", "milks" → "milk". Conservative:
+    # only chop the trailing 's' on common drink nouns to avoid eating real
+    # singulars (e.g. "iced chocolates" exists; "tiramisu" doesn't end in 's').
+    plural_match = re.match(r"^(.*?)(latte|milk|tiramisu|chocolate|americano)s$", base)
+    if plural_match:
+        out.append(f"{plural_match.group(1)}{plural_match.group(2)}")
+    # Drop redundant adjectives a customer might type. "iced chocolate" already
+    # canonical; "cold matcha latte" should match "matcha latte".
+    stripped = re.sub(r"\b(cold|hot|warm|less ice|extra ice)\b", "", base)
+    stripped = re.sub(r"\s+", " ", stripped).strip()
+    if stripped and stripped != base:
+        out.append(stripped)
+    # Deduplicate while preserving order.
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for k in out:
+        if k and k not in seen:
+            seen.add(k)
+            uniq.append(k)
+    return uniq
+
+
+def _resolve_canonical(name: str | None, mapping: dict[str, str]) -> str | None:
+    """Return the canonical product name from `mapping` for a free-typed input."""
+    for k in _name_key_variants(name):
+        canonical = mapping.get(k)
+        if canonical:
+            return canonical
+    return name
+
+
 def import_financial_csv(stream, replace: bool = False) -> tuple[int, int]:
     """
     Parse the raw Google-Sheets financial tracker CSV.
@@ -1002,7 +1194,7 @@ def import_financial_csv(stream, replace: bool = False) -> tuple[int, int]:
                     cur.execute("DELETE FROM finance_cash_inflows")
                 for t in inflows:
                     txn_no, amount, desc, cups, txn_date, shot, pic, customer_name, product_name, pay_type, pay_status = t
-                    product_name = canonical_products.get(_name_key(product_name), product_name)
+                    product_name = _resolve_canonical(product_name, canonical_products)
                     cur.execute(
                         """
                         INSERT INTO finance_cash_inflows
@@ -1167,11 +1359,162 @@ def dashboard():
         "SELECT * FROM inventory_prep ORDER BY component_name",
         fetch=True,
     )
+    prep_plan_rows = _compute_prep_plan_readiness()
     return render_template(
         "dashboard.html",
         stats=stats,
         recent_tasks=recent_tasks,
         prep_rows=prep_rows or [],
+        prep_plan_rows=prep_plan_rows,
+    )
+
+
+def _compute_prep_plan_readiness() -> list[dict]:
+    """
+    Resolve each prep_plan row to its linked component (if any) and decide
+    whether ingredient stock is sufficient to produce the requested qty_to_prep.
+
+    The math: for each component_ingredient, required_amount = qty_per_component
+    × qty_to_prep. If every linked inventory line carries enough stock, the row
+    is "ok". If at least one line is short, the row is "short". Plans that
+    aren't linked to a component yet sit in "unknown" so the operator knows
+    they still need to wire up the recipe.
+    """
+    try:
+        rows = query(
+            """
+            SELECT pp.id, pp.week_start, pp.component_id, pp.component_label,
+                   pp.qty_to_prep, pp.notes, pp.sort_order,
+                   c.name AS component_name, c.base_yield AS component_base_yield
+            FROM prep_plan pp
+            LEFT JOIN components c ON c.id = pp.component_id
+            ORDER BY pp.sort_order, pp.id
+            """,
+            fetch=True,
+        ) or []
+    except psycopg2.Error as exc:
+        if getattr(exc, "pgcode", None) == "42P01":
+            return []  # table not yet created on this DB
+        raise
+
+    enriched: list[dict] = []
+    for r in rows:
+        out = dict(r)
+        out["state"] = "unknown"
+        out["shortfalls"] = []
+        if r.get("component_id"):
+            ings = query(
+                """
+                SELECT ci.qty_g, ci.label_override, ii.item_name, ii.qty_grams
+                FROM component_ingredients ci
+                LEFT JOIN inventory_items ii ON ii.id = ci.inventory_item_id
+                WHERE ci.component_id = %s
+                ORDER BY ci.sort_order, ci.id
+                """,
+                (r["component_id"],),
+                fetch=True,
+            ) or []
+            base_yield = float(r.get("component_base_yield") or 1) or 1.0
+            scale = float(r.get("qty_to_prep") or 0) / base_yield
+            shortfalls: list[dict] = []
+            any_known = False
+            for ing in ings:
+                qpy = ing.get("qty_g")
+                stock = ing.get("qty_grams")
+                if qpy is None or stock is None:
+                    continue
+                any_known = True
+                needed = float(qpy) * scale
+                if float(stock) + 1e-9 < needed:
+                    shortfalls.append(
+                        {
+                            "name": ing.get("label_override") or ing.get("item_name") or "—",
+                            "needed": needed,
+                            "have": float(stock),
+                        }
+                    )
+            if not ings or not any_known:
+                out["state"] = "unknown"
+            elif shortfalls:
+                out["state"] = "short"
+                out["shortfalls"] = shortfalls
+            else:
+                out["state"] = "ok"
+        enriched.append(out)
+    return enriched
+
+
+@app.route("/prep-plan", methods=["GET", "POST"])
+def prep_plan_page():
+    """
+    Manage the weekly prep plan keyed in by humans (item 9 / v0.2.5).
+    For latte demand, operators add separate rows per cloud and per flavour so
+    qty distribution stays commutative across products that share components.
+    """
+    if request.method == "POST":
+        action = request.form.get("action")
+        if action == "add":
+            label = request.form.get("component_label", "").strip()
+            component_id = request.form.get("component_id", type=int)
+            try:
+                qty = float(request.form.get("qty_to_prep") or 0)
+            except ValueError:
+                qty = 0.0
+            if qty < 0:
+                qty = 0.0
+            week_start = parse_date(request.form.get("week_start")) or date.today()
+            notes = request.form.get("notes", "").strip() or None
+            if not label and component_id:
+                # Default the label to the component name when blank.
+                row = query(
+                    "SELECT name FROM components WHERE id = %s",
+                    (component_id,),
+                    fetch=True,
+                    one=True,
+                )
+                label = (row or {}).get("name") or "(unnamed)"
+            if not label:
+                flash("Pick a component or type a label.", "error")
+                return redirect(url_for("prep_plan_page"))
+            so = query(
+                "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM prep_plan",
+                fetch=True,
+                one=True,
+            )["n"]
+            query(
+                """
+                INSERT INTO prep_plan
+                  (week_start, component_id, component_label, qty_to_prep, notes, sort_order)
+                VALUES (%s,%s,%s,%s,%s,%s)
+                """,
+                (week_start, component_id, label, qty, notes, so),
+            )
+            flash("Prep plan row added.", "success")
+        elif action == "delete":
+            pid = request.form.get("prep_plan_id", type=int)
+            if pid:
+                query("DELETE FROM prep_plan WHERE id = %s", (pid,))
+                flash("Prep plan row removed.", "success")
+        elif action == "update_qty":
+            pid = request.form.get("prep_plan_id", type=int)
+            try:
+                qty = float(request.form.get("qty_to_prep") or 0)
+            except ValueError:
+                qty = 0.0
+            if qty < 0:
+                qty = 0.0
+            if pid:
+                query("UPDATE prep_plan SET qty_to_prep = %s WHERE id = %s", (qty, pid))
+                flash("Qty updated.", "success")
+        return redirect(url_for("prep_plan_page"))
+
+    rows = _compute_prep_plan_readiness()
+    components = list_components()
+    return render_template(
+        "prep_plan.html",
+        rows=rows,
+        components=components,
+        today=date.today().isoformat(),
     )
 
 
@@ -1457,10 +1800,7 @@ def _push_order_to_finance_if_done(order_id: int) -> None:
                         if it.get("unit_price") is not None
                         else None
                     )
-                    product_name = canonical_products.get(
-                        _name_key(it.get("product_name")),
-                        it.get("product_name"),
-                    )
+                    product_name = _resolve_canonical(it.get("product_name"), canonical_products)
                     cur.execute(
                         """
                         INSERT INTO finance_cash_inflows
@@ -1799,6 +2139,116 @@ def _recipe_scale_factor(recipe: dict, desired: float | None) -> float:
     return d / base
 
 
+def _fetch_recipe_ingredients(recipe_id: int) -> list[dict]:
+    """
+    Return enriched recipe ingredient rows. Falls back gracefully when the
+    legacy schema does not yet have prep_note / prep_done columns.
+    """
+    sql_full = """
+        SELECT ri.*,
+               ii.item_name AS inventory_item_name,
+               ii.qty_grams AS stock_qty_g,
+               c.name AS component_name,
+               c.component_type AS component_type
+        FROM recipe_ingredients ri
+        LEFT JOIN inventory_items ii ON ii.id = ri.inventory_item_id
+        LEFT JOIN components c ON c.id = ri.component_id
+        WHERE ri.recipe_id = %s
+        ORDER BY ri.sort_order, ri.id
+    """
+    try:
+        return query(sql_full, (recipe_id,), fetch=True) or []
+    except psycopg2.Error as exc:
+        if getattr(exc, "pgcode", None) != "42703":
+            raise
+    sql_no_component = """
+        SELECT ri.*,
+               ii.item_name AS inventory_item_name,
+               ii.qty_grams AS stock_qty_g
+        FROM recipe_ingredients ri
+        LEFT JOIN inventory_items ii ON ii.id = ri.inventory_item_id
+        WHERE ri.recipe_id = %s
+        ORDER BY ri.sort_order, ri.id
+    """
+    rows = query(sql_no_component, (recipe_id,), fetch=True) or []
+    for r in rows:
+        r.setdefault("component_id", None)
+        r.setdefault("component_name", None)
+        r.setdefault("component_type", None)
+        r.setdefault("prep_note", None)
+        r.setdefault("prep_done", False)
+    return rows
+
+
+def _insert_recipe_ingredient(
+    *,
+    recipe_id: int,
+    sort_order: int,
+    inventory_item_id: int | None,
+    component_id: int | None,
+    label_override: str | None,
+    qty: float | None,
+    unit: str,
+    prep_note: str | None,
+) -> None:
+    """
+    Insert a recipe ingredient line. Tries the full v0.2.5 schema first
+    (component_id + prep_note + prep_done) and progressively falls back to older
+    column sets so legacy Supabase deploys still work without crashing with a
+    500. The schema migration runs on first request, so this is mostly belt-and-
+    braces, but it neutralises the historical recipe-ingredient 500.
+    """
+    base_cols = ["recipe_id", "sort_order", "label_override", "qty_per_yield", "unit"]
+    base_vals: list = [recipe_id, sort_order, label_override, qty, unit]
+    if inventory_item_id is not None:
+        base_cols.append("inventory_item_id")
+        base_vals.append(inventory_item_id)
+    if component_id is not None:
+        base_cols.append("component_id")
+        base_vals.append(component_id)
+    if prep_note:
+        base_cols.append("prep_note")
+        base_vals.append(prep_note)
+
+    def _exec(cols: list[str], vals: list) -> bool:
+        placeholders = ",".join(["%s"] * len(cols))
+        sql = f"INSERT INTO recipe_ingredients ({', '.join(cols)}) VALUES ({placeholders})"
+        try:
+            query(sql, tuple(vals))
+            return True
+        except psycopg2.Error as exc:
+            if getattr(exc, "pgcode", None) != "42703":
+                raise
+            return False
+
+    # Full attempt — v0.2.5 schema.
+    if _exec(base_cols, base_vals):
+        return
+    # Drop prep_note (older schema) and retry.
+    if "prep_note" in base_cols:
+        idx = base_cols.index("prep_note")
+        cols2 = base_cols[:idx] + base_cols[idx + 1 :]
+        vals2 = base_vals[:idx] + base_vals[idx + 1 :]
+        if _exec(cols2, vals2):
+            return
+    else:
+        cols2, vals2 = base_cols, base_vals
+    # Drop component_id (very old schema). For component-only lines this means
+    # the line cannot be saved without a fresh migration, so surface that.
+    if component_id is not None and inventory_item_id is None:
+        raise RuntimeError(
+            "recipe_ingredients.component_id is missing on this database. "
+            "Please re-run schema migration to support component ingredient lines."
+        )
+    if "component_id" in cols2:
+        idx = cols2.index("component_id")
+        cols3 = cols2[:idx] + cols2[idx + 1 :]
+        vals3 = vals2[:idx] + vals2[idx + 1 :]
+        _exec(cols3, vals3)
+        return
+    raise RuntimeError("Could not insert recipe ingredient line — schema mismatch.")
+
+
 @app.route("/recipes/<int:recipe_id>", methods=["GET", "POST"])
 def recipe_detail(recipe_id):
     recipe = query("SELECT * FROM recipes WHERE id = %s", (recipe_id,), fetch=True, one=True)
@@ -1819,6 +2269,7 @@ def recipe_detail(recipe_id):
             else:
                 component_id = None
             label_override = request.form.get("label_override", "").strip() or None
+            prep_note = request.form.get("prep_note", "").strip() or None
             if inventory_item_id or component_id:
                 qraw = (request.form.get("qty_per_yield") or "").strip()
                 try:
@@ -1835,38 +2286,19 @@ def recipe_detail(recipe_id):
                         one=True,
                     )
                     so = r["n"]
-                try:
-                    query(
-                        """
-                        INSERT INTO recipe_ingredients
-                          (recipe_id, sort_order, inventory_item_id, component_id, label_override, qty_per_yield, unit)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s)
-                        """,
-                        (recipe_id, so, inventory_item_id, component_id, label_override, qty, unit),
-                    )
-                    flash("Ingredient line added.", "success")
-                except psycopg2.Error as exc:
-                    # Backward-compatible fallback for older DBs that do not yet have
-                    # recipe_ingredients.component_id (legacy schema on some deploys).
-                    if getattr(exc, "pgcode", None) == "42703":
-                        if component_id:
-                            flash(
-                                "This database schema is outdated for component ingredient lines. "
-                                "Please run the latest schema migration.",
-                                "error",
-                            )
-                        else:
-                            query(
-                                """
-                                INSERT INTO recipe_ingredients
-                                  (recipe_id, sort_order, inventory_item_id, label_override, qty_per_yield, unit)
-                                VALUES (%s,%s,%s,%s,%s,%s)
-                                """,
-                                (recipe_id, so, inventory_item_id, label_override, qty, unit),
-                            )
-                            flash("Ingredient line added.", "success")
-                    else:
-                        raise
+                _insert_recipe_ingredient(
+                    recipe_id=recipe_id,
+                    sort_order=so,
+                    inventory_item_id=inventory_item_id,
+                    component_id=component_id,
+                    label_override=label_override,
+                    qty=qty,
+                    unit=unit,
+                    prep_note=prep_note,
+                )
+                flash("Ingredient line added.", "success")
+            else:
+                flash("Pick an inventory item or component before adding the line.", "error")
         elif action == "set_yield":
             try:
                 by = float(request.form.get("base_yield_cups") or 1)
@@ -1896,22 +2328,7 @@ def recipe_detail(recipe_id):
     desired = request.values.get("desired_cups", type=float)
     factor = _recipe_scale_factor(recipe, desired)
 
-    ingredients = query(
-        """
-        SELECT ri.*,
-               ii.item_name AS inventory_item_name,
-               ii.qty_grams AS stock_qty_g,
-               c.name       AS component_name,
-               c.component_type AS component_type
-        FROM recipe_ingredients ri
-        LEFT JOIN inventory_items ii ON ii.id = ri.inventory_item_id
-        LEFT JOIN components c ON c.id = ri.component_id
-        WHERE ri.recipe_id = %s
-        ORDER BY ri.sort_order, ri.id
-        """,
-        (recipe_id,),
-        fetch=True,
-    )
+    ingredients = _fetch_recipe_ingredients(recipe_id)
     inventory_items = query(
         "SELECT id, item_name FROM inventory_items ORDER BY item_name",
         fetch=True,
@@ -1948,16 +2365,18 @@ def recipe_detail(recipe_id):
         )
         enriched.append(row)
 
+    # v0.2.5 — checklist is driven exclusively by ingredient lines whose
+    # prep_note is non-empty. If a line has no prep instruction, there is
+    # nothing to do for that ingredient. Empty prep_note → silently skipped.
     ingredient_prep_rows = [
         {
+            "id": ing["id"],
             "label": ing["display_name"],
-            "state": (
-                "component"
-                if ing["source_kind"] == "component"
-                else ("ready" if ing["stock_ok"] else "short")
-            ),
+            "prep_note": ing.get("prep_note") or "",
+            "done": bool(ing.get("prep_done")),
         }
         for ing in enriched
+        if (ing.get("prep_note") or "").strip()
     ]
     merged_steps = (
         [{"id": s["id"], "step_name": s["step_name"], "remarks": s.get("remarks"), "done": s["done"], "kind": "assembly"} for s in assembly_steps]
@@ -2025,6 +2444,68 @@ def recipe_assembly_step_toggle(recipe_id, step_id):
         "UPDATE recipe_assembly_steps SET done = NOT done WHERE id = %s AND recipe_id = %s",
         (step_id, recipe_id),
     )
+    return redirect(url_for("recipe_detail", recipe_id=recipe_id))
+
+
+@app.post("/recipes/<int:recipe_id>/ingredient/<int:ingredient_id>/toggle-prep")
+def recipe_ingredient_toggle_prep(recipe_id, ingredient_id):
+    """
+    Tick / untick the per-line ingredient prep checkbox. Lines with no prep_note
+    don't appear in the checklist UI, so this is only ever triggered for rows
+    that have an instruction.
+    """
+    try:
+        query(
+            """
+            UPDATE recipe_ingredients
+            SET prep_done = NOT COALESCE(prep_done, FALSE)
+            WHERE id = %s AND recipe_id = %s
+            """,
+            (ingredient_id, recipe_id),
+        )
+    except psycopg2.Error as exc:
+        if getattr(exc, "pgcode", None) == "42703":
+            flash(
+                "Ingredient prep checklist requires the v0.2.5 schema migration. "
+                "Re-run the schema bootstrap to add prep_note + prep_done columns.",
+                "error",
+            )
+        else:
+            raise
+    return redirect(url_for("recipe_detail", recipe_id=recipe_id))
+
+
+@app.post("/recipes/<int:recipe_id>/ingredient/<int:ingredient_id>/prep-note")
+def recipe_ingredient_set_prep_note(recipe_id, ingredient_id):
+    """
+    Inline edit of an existing ingredient line's prep instruction. Submitting an
+    empty string clears the note (so the row leaves the checklist).
+    """
+    note = (request.form.get("prep_note") or "").strip() or None
+    try:
+        query(
+            "UPDATE recipe_ingredients SET prep_note = %s WHERE id = %s AND recipe_id = %s",
+            (note, ingredient_id, recipe_id),
+        )
+        flash("Prep note saved.", "success")
+    except psycopg2.Error as exc:
+        if getattr(exc, "pgcode", None) == "42703":
+            flash(
+                "Prep notes need the v0.2.5 schema migration to be applied first.",
+                "error",
+            )
+        else:
+            raise
+    return redirect(url_for("recipe_detail", recipe_id=recipe_id))
+
+
+@app.post("/recipes/<int:recipe_id>/ingredient/<int:ingredient_id>/delete")
+def recipe_ingredient_delete(recipe_id, ingredient_id):
+    query(
+        "DELETE FROM recipe_ingredients WHERE id = %s AND recipe_id = %s",
+        (ingredient_id, recipe_id),
+    )
+    flash("Ingredient line removed.", "success")
     return redirect(url_for("recipe_detail", recipe_id=recipe_id))
 
 

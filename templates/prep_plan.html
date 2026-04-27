@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% block title %}Prep plan · Mug Club{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Weekly prep plan</h1>
+  <a class="btn ghost" href="{{ url_for('dashboard') }}">← Dashboard</a>
+</div>
+<p class="subtitle">
+  Decide how many portions of each <strong>cloud</strong> (matcha / coffee) and each
+  <strong>flavour</strong> (strawberry, mocha, honey buttercream, etc.) to prep this week.
+  The dashboard checks live inventory against each row's component recipe to flag what's
+  ready vs. what's short. Cloud and flavour are kept on separate rows on purpose — flavours
+  are commutative across the lattes that use them.
+</p>
+
+<section class="form-card" style="margin-bottom: 24px;">
+  <h2>Add prep row</h2>
+  <form method="post" class="row" style="flex-wrap: wrap; gap: 12px; align-items: flex-end;">
+    <input type="hidden" name="action" value="add">
+    <label>Week starting
+      <input type="date" name="week_start" value="{{ today }}">
+    </label>
+    <label>Component (links readiness math)
+      <select name="component_id">
+        <option value="">— free label only —</option>
+        {% for c in components %}
+          <option value="{{ c.id }}">{{ c.name }}{% if c.component_type %} · {{ c.component_type }}{% endif %}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Display label
+      <input type="text" name="component_label" placeholder="auto from component">
+    </label>
+    <label>Qty to prep
+      <input type="number" name="qty_to_prep" step="any" min="0" required value="0">
+    </label>
+    <label style="flex-basis: 100%;">Notes (optional)
+      <input type="text" name="notes" placeholder="e.g. test new ratio, freezer batch, …">
+    </label>
+    <div class="form-actions">
+      <button class="btn primary" type="submit">Add</button>
+    </div>
+  </form>
+</section>
+
+{% if rows %}
+<div class="table-wrap">
+<table class="data-table">
+  <thead>
+    <tr>
+      <th>Week</th>
+      <th>Component</th>
+      <th>Qty to prep</th>
+      <th>Linked component</th>
+      <th>Readiness</th>
+      <th>Notes</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in rows %}
+    <tr class="prep-plan-row {{ r.state }}">
+      <td>{{ r.week_start or '—' }}</td>
+      <td><strong>{{ r.component_label }}</strong></td>
+      <td>
+        <form method="post" class="inline" style="display:flex; gap:6px;">
+          <input type="hidden" name="action" value="update_qty">
+          <input type="hidden" name="prep_plan_id" value="{{ r.id }}">
+          <input type="number" name="qty_to_prep" step="any" min="0" value="{{ r.qty_to_prep }}" style="width:100px;">
+          <button class="btn small" type="submit">Save</button>
+        </form>
+      </td>
+      <td>{{ r.component_name or '—' }}</td>
+      <td>
+        {% if r.state == 'ok' %}<span class="pill ok">Ready</span>
+        {% elif r.state == 'short' %}
+          <span class="pill danger">Short</span>
+          <ul style="margin:6px 0 0; padding-left:18px;">
+          {% for s in r.shortfalls %}
+            <li>{{ s.name }} — need {{ '%.0f' % s.needed }}, have {{ '%.0f' % s.have }}</li>
+          {% endfor %}
+          </ul>
+        {% else %}
+          <span class="pill warning">Unmapped</span>
+        {% endif %}
+      </td>
+      <td class="desc">{{ r.notes or '' }}</td>
+      <td>
+        <form method="post" class="inline" onsubmit="return confirm('Remove this prep plan row?');">
+          <input type="hidden" name="action" value="delete">
+          <input type="hidden" name="prep_plan_id" value="{{ r.id }}">
+          <button class="btn danger small" type="submit">Remove</button>
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p class="subtitle">No prep plan rows yet. Add one above to start the week.</p>
+{% endif %}
+
+<section style="margin-top: 28px;">
+  <h3>How readiness is computed</h3>
+  <ol class="subtitle" style="line-height:1.6;">
+    <li>Each prep row points at a reusable component (e.g. <em>Matcha cloud</em>, <em>Strawberry flavour</em>).</li>
+    <li>The component lists its inventory ingredients and the grams used to produce one base yield.</li>
+    <li><code>required = qty_to_prep × (qty_g_per_yield ÷ base_yield)</code> for every ingredient line.</li>
+    <li>If <em>every</em> ingredient has enough stock, the row is <strong>Ready</strong>; otherwise it's <strong>Short</strong> with the gap shown.</li>
+    <li>Rows without a linked component or an ingredient list show as <strong>Unmapped</strong> until a component recipe is filled in.</li>
+  </ol>
+</section>
+{% endblock %}

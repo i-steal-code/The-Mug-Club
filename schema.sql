@@ -193,7 +193,24 @@ CREATE TABLE IF NOT EXISTS recipe_ingredients (
     component_id         INTEGER REFERENCES components(id) ON DELETE SET NULL,
     label_override       TEXT,
     qty_per_yield        DOUBLE PRECISION,
-    unit                 TEXT NOT NULL DEFAULT 'g'
+    unit                 TEXT NOT NULL DEFAULT 'g',
+    prep_note            TEXT,
+    prep_done            BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+-- Weekly prep plan (v0.2.5 dashboard groundwork). One row per component to prep
+-- for the upcoming service week. Cloud (matcha/coffee) and flavour (strawberry,
+-- mocha, honey buttercream, etc.) are intentionally separate rows so portion
+-- math is commutative across the products that use them.
+CREATE TABLE IF NOT EXISTS prep_plan (
+    id              SERIAL PRIMARY KEY,
+    week_start      DATE,
+    component_id    INTEGER REFERENCES components(id) ON DELETE SET NULL,
+    component_label TEXT NOT NULL,
+    qty_to_prep     DOUBLE PRECISION NOT NULL DEFAULT 0,
+    notes           TEXT,
+    sort_order      INTEGER NOT NULL DEFAULT 0,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS flavours (
@@ -246,7 +263,6 @@ CREATE INDEX IF NOT EXISTS idx_finance_inflow_date ON finance_cash_inflows(txn_d
 CREATE INDEX IF NOT EXISTS idx_finance_outflow_date ON finance_cash_outflows(txn_date);
 CREATE INDEX IF NOT EXISTS idx_recipe_steps_recipe ON recipe_steps(recipe_id);
 CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id);
-CREATE INDEX IF NOT EXISTS idx_finance_inflow_order ON finance_cash_inflows(linked_order_id);
 CREATE INDEX IF NOT EXISTS idx_order_items_order ON order_items(order_id);
 CREATE INDEX IF NOT EXISTS idx_order_items_product ON order_items(product_id);
 CREATE INDEX IF NOT EXISTS idx_recipes_product ON recipes(product_id);
@@ -257,3 +273,5 @@ CREATE INDEX IF NOT EXISTS idx_recipe_assembly_recipe ON recipe_assembly_steps(r
 CREATE INDEX IF NOT EXISTS idx_component_ingredients ON component_ingredients(component_id);
 CREATE INDEX IF NOT EXISTS idx_component_steps ON component_steps(component_id);
 CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_component ON recipe_ingredients(component_id);
+CREATE INDEX IF NOT EXISTS idx_prep_plan_component ON prep_plan(component_id);
+CREATE INDEX IF NOT EXISTS idx_prep_plan_week ON prep_plan(week_start);

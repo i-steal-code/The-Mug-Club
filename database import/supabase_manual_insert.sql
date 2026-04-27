@@ -1,4 +1,4 @@
--- v0.2.1 manual bootstrap for Supabase SQL editor.
+-- v0.2.1 → v0.2.5 manual bootstrap for Supabase SQL editor.
 -- 1) Clean and normalize CSV names manually before pasting values.
 -- 2) Run this file in Supabase SQL editor.
 -- 3) Extend with additional INSERT rows as needed.
@@ -63,5 +63,44 @@ INSERT INTO products (product_name, product_type, cloud_type, flavour_name, is_a
   ('Matcha tiramisu', 'special', NULL, NULL, TRUE, 90),
   ('Strawberry Milk', 'special', NULL, NULL, TRUE, 100),
   ('Buttercream Milk', 'special', NULL, NULL, TRUE, 110);
+
+-- v0.2.5 — make sure every registered product has an empty, modifiable recipe
+-- in the recipe databank. Steps + ingredient lines are keyed in by hand later
+-- via the recipe detail page; this just creates the joining row so the recipe
+-- shows up in /products and can be opened.
+INSERT INTO recipes
+  (product_id, name, drink_category, is_latte, cloud_type, flavour_name, base_yield_cups, notes)
+SELECT
+  p.id,
+  p.product_name,
+  CASE
+    WHEN p.product_type = 'latte' AND p.cloud_type = 'matcha' THEN 'matcha latte'
+    WHEN p.product_type = 'latte' AND p.cloud_type = 'coffee' THEN 'coffee latte'
+    WHEN p.product_type = 'latte'                              THEN 'latte'
+    ELSE                                                            'special'
+  END,
+  (p.product_type = 'latte'),
+  p.cloud_type,
+  COALESCE(p.flavour_name, ''),
+  1,
+  'Auto-seeded recipe row. Fill in ingredients + product recipe steps in the recipe databank.'
+FROM products p
+WHERE NOT EXISTS (
+  SELECT 1 FROM recipes r WHERE r.product_id = p.id
+);
+
+-- v0.2.5 — seed reusable components for the cloud + flavour split used by the
+-- prep components dashboard. Cloud (matcha / coffee) and the active flavour
+-- batches (strawberry, honey buttercream, mocha) are first-class so prep math
+-- stays commutative. base_yield is "portions of cloud / flavour produced".
+INSERT INTO components (name, component_type, base_yield, notes) VALUES
+  ('Matcha cloud',           'cloud',    1, 'Whisked matcha base for matcha lattes.'),
+  ('Coffee cloud',           'cloud',    1, 'Brewed espresso shot for coffee lattes.'),
+  ('Strawberry flavour',     'flavour',  1, 'Strawberry puree base for strawberry lattes / milk.'),
+  ('Honey buttercream',      'flavour',  1, 'Honey + salted butter cream for buttercream drinks.'),
+  ('Mocha flavour',          'flavour',  1, 'Cocoa-forward base for mocha drinks.'),
+  ('Iced chocolate base',    'flavour',  1, 'Hot chocolate / iced chocolate base.'),
+  ('Tiramisu cream',         'flavour',  1, 'Cream cheese + cream + ladyfinger setup for tiramisu cups.')
+ON CONFLICT (name) DO NOTHING;
 
 COMMIT;

@@ -36,6 +36,7 @@
 
 <h2>Ingredients</h2>
 {% if ingredients %}
+<div class="table-wrap">
 <table class="data-table">
   <thead>
     <tr>
@@ -44,6 +45,8 @@
       <th>Qty (scaled)</th>
       <th>Stock (g)</th>
       <th>Ready?</th>
+      <th>Prep instruction</th>
+      <th></th>
     </tr>
   </thead>
   <tbody>
@@ -66,10 +69,23 @@
         {% elif ing.stock_ok %}<span class="pill ok">OK</span>
         {% else %}<span class="pill danger">Short</span>{% endif %}
       </td>
+      <td>
+        <form method="post" action="{{ url_for('recipe_ingredient_set_prep_note', recipe_id=recipe.id, ingredient_id=ing.id) }}" class="inline" style="display:flex; gap:6px;">
+          <input type="text" name="prep_note" value="{{ ing.prep_note or '' }}" placeholder="e.g. whisk to ribbon stage" style="min-width:180px;">
+          <button class="btn small" type="submit">Save</button>
+        </form>
+      </td>
+      <td>
+        <form method="post" action="{{ url_for('recipe_ingredient_delete', recipe_id=recipe.id, ingredient_id=ing.id) }}" class="inline"
+              onsubmit="return confirm('Remove this ingredient line?');">
+          <button class="btn danger small" type="submit">Remove</button>
+        </form>
+      </td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
 <p class="subtitle">No ingredient lines yet. Add a line by picking either an inventory item or a reusable component.</p>
 {% endif %}
@@ -111,6 +127,9 @@
   <label>Label override (optional, for naming tweaks)
     <input type="text" name="label_override" maxlength="200" placeholder="leave blank to use ingredient / component name">
   </label>
+  <label>Ingredient prep instruction (optional)
+    <input type="text" name="prep_note" maxlength="240" placeholder="e.g. whisk strawberry puree until smooth — leave blank if no prep is needed">
+  </label>
   <div class="form-actions">
     <button class="btn primary" type="submit">Add line</button>
   </div>
@@ -129,31 +148,31 @@
 })();
 </script>
 
-<h2>Ingredient preparation checklist</h2>
+<h2>Ingredient prep checklist</h2>
+<p class="subtitle">Auto-built from ingredient lines whose <em>prep instruction</em> is filled in. Lines with no instruction are skipped — there's nothing to prep on those.</p>
 {% if ingredient_prep_rows %}
 <table class="data-table">
   <thead>
-    <tr><th>Ingredient / component</th><th>Prep state</th></tr>
+    <tr><th>Ingredient / component</th><th>Prep instruction</th><th>Done?</th></tr>
   </thead>
   <tbody>
   {% for p in ingredient_prep_rows %}
-    <tr>
-      <td><strong>{{ p.label }}</strong></td>
+    <tr class="prep-row {% if p.done %}is-done{% endif %}">
+      <td class="prep-label"><strong>{{ p.label }}</strong></td>
+      <td>{{ p.prep_note }}</td>
       <td>
-        {% if p.state == 'ready' %}
-          <span class="pill ok">Ready</span>
-        {% elif p.state == 'short' %}
-          <span class="pill danger">Short</span>
-        {% else %}
-          <span class="pill">Component</span>
-        {% endif %}
+        <form method="post" action="{{ url_for('recipe_ingredient_toggle_prep', recipe_id=recipe.id, ingredient_id=p.id) }}" class="inline">
+          <button type="submit" class="prep-toggle {% if p.done %}is-done{% endif %}">
+            {% if p.done %}✓ Done{% else %}Mark done{% endif %}
+          </button>
+        </form>
       </td>
     </tr>
   {% endfor %}
   </tbody>
 </table>
 {% else %}
-<p class="subtitle">No preparation checklist rows yet.</p>
+<p class="subtitle">No prep instructions on any ingredient line yet — add a <em>prep instruction</em> next to an ingredient to see it here.</p>
 {% endif %}
 
 <h2>Product recipe steps</h2>

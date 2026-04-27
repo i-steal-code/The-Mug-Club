@@ -62,7 +62,49 @@
 
 <section>
   <div class="page-header">
-    <h2>Prep components</h2>
+    <h2>Prep plan (this week)</h2>
+    <a class="btn primary" href="{{ url_for('prep_plan_page') }}">Edit prep plan</a>
+  </div>
+  <p class="subtitle">
+    Cloud (matcha / coffee) and flavours (strawberry, mocha, honey buttercream, …) sit on
+    separate rows so portion math stays commutative. Readiness compares qty-to-prep against
+    live inventory through the linked component recipe.
+  </p>
+  {% if prep_plan_rows %}
+  <div class="table-wrap">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Component</th>
+        <th>Qty to prep</th>
+        <th>Linked component</th>
+        <th>Readiness</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for r in prep_plan_rows %}
+      <tr class="prep-plan-row {{ r.state }}">
+        <td><strong>{{ r.component_label }}</strong></td>
+        <td>{{ r.qty_to_prep }}</td>
+        <td>{{ r.component_name or '—' }}</td>
+        <td>
+          {% if r.state == 'ok' %}<span class="pill ok">Ready</span>
+          {% elif r.state == 'short' %}<span class="pill danger">Short</span>
+          {% else %}<span class="pill warning">Unmapped</span>{% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+    <p class="subtitle">No prep plan rows yet — <a href="{{ url_for('prep_plan_page') }}">add the first one</a> for the week.</p>
+  {% endif %}
+</section>
+
+<section>
+  <div class="page-header">
+    <h2>Prep components (legacy CSV)</h2>
     <a class="btn ghost" href="{{ url_for('export_table', name='inventory_prep') }}">Export prep CSV</a>
   </div>
   {% if prep_rows %}
@@ -85,7 +127,7 @@
     </tbody>
   </table>
   {% else %}
-    <p>No prep rows yet.</p>
+    <p>No legacy prep rows yet — these come from the inventory CSV import.</p>
   {% endif %}
 </section>
 {% endblock %}
