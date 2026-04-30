@@ -21,9 +21,9 @@
     <small>{{ stats.orders_pending }} pending</small>
   </div>
   <div class="stat-card">
-    <h3>Prep components</h3>
+    <h3>Prep plan</h3>
     <p class="big">{{ stats.prep_ready }}/{{ stats.prep_total }}</p>
-    <small>Ready this week</small>
+    <small>Rows with sufficient stock</small>
   </div>
 </section>
 
@@ -99,35 +99,6 @@
   </div>
   {% else %}
     <p class="subtitle">No prep plan rows yet — <a href="{{ url_for('prep_plan_page') }}">add the first one</a> for the week.</p>
-  {% endif %}
-</section>
-
-<section>
-  <div class="page-header">
-    <h2>Prep components (legacy CSV)</h2>
-    <a class="btn ghost" href="{{ url_for('export_table', name='inventory_prep') }}">Export prep CSV</a>
-  </div>
-  {% if prep_rows %}
-  <table class="data-table">
-    <thead>
-      <tr>
-        <th>Component</th>
-        <th>Qty to prep</th>
-        <th>Ready?</th>
-      </tr>
-    </thead>
-    <tbody>
-    {% for r in prep_rows %}
-      <tr>
-        <td><strong>{{ r.component_name }}</strong></td>
-        <td>{{ r.qty_for_week or '—' }}</td>
-        <td>{% if r.ready %}<span class="pill ok">Ready</span>{% else %}<span class="pill warning">Pending</span>{% endif %}</td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-    <p>No legacy prep rows yet — these come from the inventory CSV import.</p>
   {% endif %}
 </section>
 {% endblock %}

@@ -115,7 +115,7 @@
   {% for r in margin_menu %}
     <tr>
       <td>{{ r.category or '—' }}</td>
-      <td><strong>{{ r.item_name }}</strong></td>
+      <td><strong>{{ r.product_label or r.item_name }}</strong></td>
       <td>{% if r.cost is not none %}{{ '%.4f' % r.cost }}{% else %}—{% endif %}</td>
       <td>{% if r.selling_price is not none %}{{ '%.2f' % r.selling_price }}{% else %}—{% endif %}</td>
       <td>{% if r.profit is not none %}{{ '%.4f' % r.profit }}{% else %}—{% endif %}</td>

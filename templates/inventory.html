@@ -5,7 +5,6 @@
   <h1>Inventory</h1>
   <div class="header-actions">
     <a class="btn ghost" href="{{ url_for('export_table', name='inventory_items') }}">Export items CSV</a>
-    <a class="btn ghost" href="{{ url_for('export_table', name='inventory_prep') }}">Export prep CSV</a>
     <a class="btn primary" href="{{ url_for('inventory_add') }}">+ Add line</a>
   </div>
 </div>
@@ -24,6 +23,7 @@
       <th>Remark</th>
       <th>Updated?</th>
       <th>Status</th>
+      <th></th>
     </tr>
   </thead>
   <tbody>
@@ -46,9 +46,10 @@
           <span class="pill ok">OK</span>
         {% endif %}
       </td>
+      <td><a class="btn small ghost" href="{{ url_for('inventory_edit', item_id=p.id) }}">Edit</a></td>
     </tr>
   {% else %}
-    <tr><td colspan="8">No inventory rows yet. Load data via Supabase SQL insert script or add lines manually.</td></tr>
+    <tr><td colspan="9">No inventory rows yet. Load data via Supabase SQL insert script or add lines manually.</td></tr>
   {% endfor %}
   </tbody>
 </table>

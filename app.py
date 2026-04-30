@@ -506,6 +506,25 @@ _SCHEMA_MIGRATION_DDL = [
     EXCEPTION WHEN duplicate_object THEN NULL;
     END $$
     """,
+    # v0.2.6 — link each inflow row to `products` for consistent names in finance + analytics.
+    "ALTER TABLE finance_cash_inflows ADD COLUMN IF NOT EXISTS product_id INTEGER",
+    """
+    DO $$ BEGIN
+      ALTER TABLE finance_cash_inflows
+        ADD CONSTRAINT finance_cash_inflows_product_id_fkey
+        FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL;
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END $$
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_finance_inflows_product ON finance_cash_inflows(product_id)",
+    """
+    UPDATE finance_cash_inflows f
+    SET product_id = p.id
+    FROM products p
+    WHERE f.product_id IS NULL
+      AND lower(regexp_replace(trim(COALESCE(f.product_name, '')), '\\s+', ' ', 'g'))
+        = lower(regexp_replace(trim(COALESCE(p.product_name, '')), '\\s+', ' ', 'g'))
+    """,
     # Orders get a "finance_pushed_at" stamp so completion → 1NF finance insert
     # only happens once, even if the buttons are re-clicked (idempotent).
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS finance_pushed_at TIMESTAMPTZ",
@@ -876,18 +895,19 @@ def recalc_order_totals(order_id: int) -> None:
 # Import parsers
 # ---------------------------------------------------------------------------
 def import_inventory_csv(stream, replace: bool = False) -> tuple[int, int]:
-    """Returns (items_upserted, prep_rows_inserted)."""
+    """Returns (items_upserted, legacy_prep_rows_ignored). Legacy prep CSV block is ignored (v0.2.6)."""
     text = io.TextIOWrapper(stream, encoding="utf-8", newline="")
     rows = list(csv.reader(text))
     items = []
-    prep = []
     mode = "items"
     for row in rows:
         if not row or all(not (c or "").strip() for c in row):
             continue
         key = (row[0] or "").strip().lower()
         if key == "component":
-            mode = "prep"
+            mode = "ignore_legacy_prep"
+            continue
+        if mode == "ignore_legacy_prep":
             continue
         if mode == "items":
             if (row[0] or "").strip().lower() == "item":
@@ -905,20 +925,12 @@ def import_inventory_csv(stream, replace: bool = False) -> tuple[int, int]:
             remark = (row[2] or "").strip() if len(row) > 2 else ""
             upd = parse_bool_cell(row[3]) if len(row) > 3 else False
             items.append((name, qty, remark or None, upd))
-        else:
-            cname = (row[0] or "").strip()
-            if not cname or cname.lower() == "component":
-                continue
-            qfw = (row[1] or "").strip() if len(row) > 1 else ""
-            ready = parse_bool_cell(row[2]) if len(row) > 2 else False
-            prep.append((cname, qfw or None, ready))
 
     conn = get_conn()
     try:
         with conn:
             with conn.cursor() as cur:
                 if replace:
-                    cur.execute("DELETE FROM inventory_prep")
                     cur.execute("DELETE FROM inventory_items")
                 for name, qty, remark, upd in items:
                     cur.execute(
@@ -933,18 +945,7 @@ def import_inventory_csv(stream, replace: bool = False) -> tuple[int, int]:
                         (name, qty, remark, upd),
                     )
                 n_items = len(items)
-                if prep:
-                    cur.execute("DELETE FROM inventory_prep")
-                    for p in prep:
-                        cur.execute(
-                            """
-                            INSERT INTO inventory_prep (component_name, qty_for_week, ready)
-                            VALUES (%s, %s, %s)
-                            """,
-                            p,
-                        )
-                n_prep = len(prep)
-        return n_items, n_prep
+        return n_items, 0
     finally:
         conn.close()
 
@@ -1131,6 +1132,21 @@ def _resolve_canonical(name: str | None, mapping: dict[str, str]) -> str | None:
     return name
 
 
+def _sql_finance_inflows_join_products() -> str:
+    """
+    Join finance inflow rows to `products`: prefer explicit product_id, else
+    case/spacing-insensitive product_name match (same rule everywhere in v0.2.6).
+    """
+    return """
+LEFT JOIN products p ON p.id = f.product_id
+   OR (
+        f.product_id IS NULL
+        AND lower(regexp_replace(trim(COALESCE(f.product_name, '')), '\\s+', ' ', 'g'))
+         = lower(regexp_replace(trim(COALESCE(p.product_name, '')), '\\s+', ' ', 'g'))
+      )
+"""
+
+
 def import_financial_csv(stream, replace: bool = False) -> tuple[int, int]:
     """
     Parse the raw Google-Sheets financial tracker CSV.
@@ -1233,23 +1249,28 @@ def import_financial_csv(stream, replace: bool = False) -> tuple[int, int]:
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT product_name FROM products WHERE product_name IS NOT NULL")
-                canonical_products = {
-                    _name_key(r["product_name"]): r["product_name"] for r in (cur.fetchall() or [])
-                }
+                cur.execute(
+                    "SELECT id, product_name FROM products WHERE product_name IS NOT NULL"
+                )
+                prod_rows = cur.fetchall() or []
+                canonical_products = {_name_key(r["product_name"]): r["product_name"] for r in prod_rows}
+                product_id_by_key = {_name_key(r["product_name"]): r["id"] for r in prod_rows}
                 if replace:
                     cur.execute("DELETE FROM finance_cash_outflows")
                     cur.execute("DELETE FROM finance_cash_inflows")
                 for t in inflows:
                     txn_no, amount, desc, cups, txn_date, shot, pic, customer_name, product_name, pay_type, pay_status = t
                     product_name = _resolve_canonical(product_name, canonical_products)
+                    pid = None
+                    if product_name:
+                        pid = product_id_by_key.get(_name_key(product_name))
                     cur.execute(
                         """
                         INSERT INTO finance_cash_inflows
                           (source_txn_number, amount, description, quantity_cups, txn_date,
-                           screenshot, person_in_charge, customer_name, product_name,
+                           screenshot, person_in_charge, customer_name, product_name, product_id,
                            payment_type, payment_status)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         """,
                         (
                             txn_no,
@@ -1261,6 +1282,7 @@ def import_financial_csv(stream, replace: bool = False) -> tuple[int, int]:
                             pic,
                             customer_name,
                             product_name,
+                            pid,
                             pay_type,
                             pay_status,
                         ),
@@ -1383,13 +1405,12 @@ def dashboard():
             fetch=True,
             one=True,
         )["c"],
-        "prep_total": query("SELECT COUNT(*) AS c FROM inventory_prep", fetch=True, one=True)["c"],
-        "prep_ready": query(
-            "SELECT COUNT(*) AS c FROM inventory_prep WHERE ready = TRUE",
-            fetch=True,
-            one=True,
-        )["c"],
+        "prep_total": 0,
+        "prep_ready": 0,
     }
+    prep_plan_rows = _compute_prep_plan_readiness()
+    stats["prep_total"] = len(prep_plan_rows)
+    stats["prep_ready"] = sum(1 for r in prep_plan_rows if r.get("state") == "ok")
     recent_tasks = query(
         """
         SELECT t.id, t.title, t.status, t.priority,
@@ -1403,16 +1424,10 @@ def dashboard():
         """,
         fetch=True,
     )
-    prep_rows = query(
-        "SELECT * FROM inventory_prep ORDER BY component_name",
-        fetch=True,
-    )
-    prep_plan_rows = _compute_prep_plan_readiness()
     return render_template(
         "dashboard.html",
         stats=stats,
         recent_tasks=recent_tasks,
-        prep_rows=prep_rows or [],
         prep_plan_rows=prep_plan_rows,
     )
 
@@ -1629,8 +1644,12 @@ def tasks_add():
 def tasks_update_status(task_id):
     status = request.form.get("status")
     if status in TASK_STATUSES:
-        query("UPDATE tasks SET status = %s WHERE id = %s", (status, task_id))
-        flash("Task status updated.", "success")
+        if status == "Completed":
+            query("DELETE FROM tasks WHERE id = %s", (task_id,))
+            flash("Task completed and removed.", "success")
+        else:
+            query("UPDATE tasks SET status = %s WHERE id = %s", (status, task_id))
+            flash("Task status updated.", "success")
     else:
         flash("Invalid status.", "error")
     return redirect(request.referrer or url_for("tasks_list"))
@@ -1646,8 +1665,16 @@ def tasks_advance_status(task_id):
     )
     if not row:
         abort(404)
+    if row["status"] == "Completed":
+        query("DELETE FROM tasks WHERE id = %s", (task_id,))
+        flash("Completed task removed.", "success")
+        return redirect(url_for("tasks_list"))
     nxt = _cycle_next(row["status"], TASK_STATUS_CYCLE)
-    query("UPDATE tasks SET status = %s WHERE id = %s", (nxt, task_id))
+    if nxt == "Completed":
+        query("DELETE FROM tasks WHERE id = %s", (task_id,))
+        flash("Task completed and removed.", "success")
+    else:
+        query("UPDATE tasks SET status = %s WHERE id = %s", (nxt, task_id))
     return redirect(url_for("tasks_list"))
 
 
@@ -1705,6 +1732,59 @@ def inventory_add():
         flash("Inventory item saved.", "success")
         return redirect(url_for("inventory_list"))
     return render_template("inventory_add.html")
+
+
+@app.route("/inventory/<int:item_id>/edit", methods=["GET", "POST"])
+def inventory_edit(item_id):
+    row = query(
+        "SELECT * FROM inventory_items WHERE id = %s",
+        (item_id,),
+        fetch=True,
+        one=True,
+    )
+    if not row:
+        abort(404)
+    if request.method == "POST":
+        name = request.form.get("name", "").strip()
+        try:
+            qty = float(request.form.get("qty_grams", "") or 0)
+        except ValueError:
+            flash("Quantity must be a number.", "error")
+            return redirect(url_for("inventory_edit", item_id=item_id))
+        source_cost = parse_money(request.form.get("source_cost"))
+        source_qty_g = parse_money(request.form.get("source_qty_g"))
+        supplier = request.form.get("supplier", "").strip() or None
+        remark = request.form.get("remark", "").strip() or None
+        updated = request.form.get("updated_flag") == "on"
+        if not name:
+            flash("Item name is required.", "error")
+            return redirect(url_for("inventory_edit", item_id=item_id))
+        conflict = query(
+            "SELECT id FROM inventory_items WHERE lower(item_name) = lower(%s) AND id <> %s",
+            (name, item_id),
+            fetch=True,
+            one=True,
+        )
+        if conflict:
+            flash("Another row already uses that item name.", "error")
+            return redirect(url_for("inventory_edit", item_id=item_id))
+        query(
+            """
+            UPDATE inventory_items SET
+              item_name = %s,
+              qty_grams = %s,
+              source_cost = %s,
+              source_qty_g = %s,
+              supplier = %s,
+              remark = %s,
+              updated_flag = %s
+            WHERE id = %s
+            """,
+            (name, qty, source_cost, source_qty_g, supplier, remark, updated, item_id),
+        )
+        flash("Inventory item updated.", "success")
+        return redirect(url_for("inventory_list"))
+    return render_template("inventory_edit.html", item=row)
 
 
 # ---------------------------------------------------------------------------
@@ -1822,7 +1902,7 @@ def _push_order_to_finance_if_done(order_id: int) -> None:
         return
     items = query(
         """
-        SELECT oi.quantity, oi.unit_price, p.product_name
+        SELECT oi.quantity, oi.unit_price, oi.product_id, p.product_name
         FROM order_items oi
         JOIN products p ON p.id = oi.product_id
         WHERE oi.order_id = %s
@@ -1853,8 +1933,8 @@ def _push_order_to_finance_if_done(order_id: int) -> None:
                         """
                         INSERT INTO finance_cash_inflows
                           (amount, description, quantity_cups, txn_date,
-                           customer_name, product_name, payment_type, payment_status)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+                           customer_name, product_name, product_id, payment_type, payment_status)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                         """,
                         (
                             amt,
@@ -1863,6 +1943,7 @@ def _push_order_to_finance_if_done(order_id: int) -> None:
                             order.get("order_date") or date.today(),
                             order["customer_name"],
                             product_name,
+                            it.get("product_id"),
                             pay_type,
                             "paid",
                         ),
@@ -2080,7 +2161,15 @@ def products_page():
 @app.route("/finance")
 def finance_summary():
     margin_menu = query(
-        "SELECT * FROM margin_menu_items ORDER BY category NULLS LAST, item_name",
+        """
+        SELECT m.*,
+               COALESCE(p.product_name, m.item_name) AS product_label
+        FROM margin_menu_items m
+        LEFT JOIN products p
+          ON lower(regexp_replace(trim(COALESCE(m.item_name, '')), '\\s+', ' ', 'g'))
+           = lower(regexp_replace(trim(COALESCE(p.product_name, '')), '\\s+', ' ', 'g'))
+        ORDER BY m.category NULLS LAST, COALESCE(p.product_name, m.item_name)
+        """,
         fetch=True,
     )
     margin_ing = query(
@@ -2088,17 +2177,12 @@ def finance_summary():
         fetch=True,
     )
     inflows = query(
-        """
+        f"""
         SELECT
             f.*,
-            COALESCE(
-              p.product_name,
-              f.product_name
-            ) AS product_name_canonical
+            COALESCE(p.product_name, f.product_name) AS product_name_canonical
         FROM finance_cash_inflows f
-        LEFT JOIN products p
-          ON lower(regexp_replace(trim(COALESCE(f.product_name, '')), '\\s+', ' ', 'g'))
-           = lower(regexp_replace(trim(COALESCE(p.product_name, '')), '\\s+', ' ', 'g'))
+        {_sql_finance_inflows_join_products()}
         ORDER BY f.txn_date NULLS LAST, f.id
         """,
         fetch=True,
@@ -2262,8 +2346,10 @@ def _insert_recipe_ingredient(
         },
     )
     # endregion
+    # Some deployments treated qty_per_yield as NOT NULL; 0 is a safe placeholder.
+    qty_db = float(qty) if qty is not None else 0.0
     base_cols = ["recipe_id", "sort_order", "label_override", "qty_per_yield", "unit"]
-    base_vals: list = [recipe_id, sort_order, label_override, qty, unit]
+    base_vals: list = [recipe_id, sort_order, label_override, qty_db, unit]
     if inventory_item_id is not None:
         base_cols.append("inventory_item_id")
         base_vals.append(inventory_item_id)
@@ -2273,6 +2359,8 @@ def _insert_recipe_ingredient(
     if prep_note:
         base_cols.append("prep_note")
         base_vals.append(prep_note)
+    base_cols.append("prep_done")
+    base_vals.append(False)
 
     def _exec(cols: list[str], vals: list) -> bool:
         placeholders = ",".join(["%s"] * len(cols))
@@ -2298,18 +2386,25 @@ def _insert_recipe_ingredient(
                 raise
             return False
 
-    # Full attempt — v0.2.5 schema.
-    if _exec(base_cols, base_vals):
+    # Full attempt — v0.2.5 schema, then strip prep_done / prep_note for older DBs.
+    work_cols, work_vals = list(base_cols), list(base_vals)
+    if _exec(work_cols, work_vals):
         return
+    if "prep_done" in work_cols:
+        i = work_cols.index("prep_done")
+        work_cols = work_cols[:i] + work_cols[i + 1 :]
+        work_vals = work_vals[:i] + work_vals[i + 1 :]
+        if _exec(work_cols, work_vals):
+            return
     # Drop prep_note (older schema) and retry.
-    if "prep_note" in base_cols:
-        idx = base_cols.index("prep_note")
-        cols2 = base_cols[:idx] + base_cols[idx + 1 :]
-        vals2 = base_vals[:idx] + base_vals[idx + 1 :]
+    if "prep_note" in work_cols:
+        idx = work_cols.index("prep_note")
+        cols2 = work_cols[:idx] + work_cols[idx + 1 :]
+        vals2 = work_vals[:idx] + work_vals[idx + 1 :]
         if _exec(cols2, vals2):
             return
     else:
-        cols2, vals2 = base_cols, base_vals
+        cols2, vals2 = work_cols, work_vals
     # Drop component_id (very old schema). For component-only lines this means
     # the line cannot be saved without a fresh migration, so surface that.
     if component_id is not None and inventory_item_id is None:
@@ -2995,26 +3090,19 @@ def analytics_page():
         """,
         fetch=True,
     )
-    prep_completion = query(
-        """
-        SELECT
-            COUNT(*)::int AS total,
-            COALESCE(SUM(CASE WHEN ready THEN 1 ELSE 0 END), 0)::int AS ready
-        FROM inventory_prep
-        """,
-        fetch=True,
-        one=True,
-    )
+    prep_plan_rows = _compute_prep_plan_readiness()
+    prep_completion = {
+        "total": len(prep_plan_rows),
+        "ready": sum(1 for r in prep_plan_rows if r.get("state") == "ok"),
+    }
     top_products = query(
-        """
+        f"""
         SELECT
           COALESCE(p.product_name, f.product_name, '—') AS product_name,
           COALESCE(SUM(f.quantity_cups), 0)::int AS cups,
           COALESCE(SUM(f.amount), 0)::float AS revenue
         FROM finance_cash_inflows f
-        LEFT JOIN products p
-          ON lower(regexp_replace(trim(COALESCE(f.product_name, '')), '\\s+', ' ', 'g'))
-           = lower(regexp_replace(trim(COALESCE(p.product_name, '')), '\\s+', ' ', 'g'))
+        {_sql_finance_inflows_join_products()}
         WHERE COALESCE(p.product_name, f.product_name) IS NOT NULL
         GROUP BY 1
         ORDER BY cups DESC, revenue DESC, product_name
@@ -3120,12 +3208,13 @@ def export_table(name):
                 "screenshot",
                 "customer_name",
                 "product_name",
+                "product_id",
                 "payment_type",
                 "payment_status",
             ],
             """
             SELECT source_txn_number, amount, description, quantity_cups, txn_date::text,
-                   screenshot, customer_name, product_name, payment_type, payment_status
+                   screenshot, customer_name, product_name, product_id, payment_type, payment_status
             FROM finance_cash_inflows ORDER BY id
             """,
         ),

@@ -499,7 +499,7 @@ v0.2.6
 patches (only bug fixes):
 1. re-consolidate all product and product names in the analytics and finance page to make all product data consistent
 2. inventory should be modifiable
-3. attempting to add a component/ingredient to a product recipe still gives error 500
+3. attempting to add a component/ingredient to a product recipe still gives error 500 where database rejects the addition (requires step-by-step debugging)
 4. completed tasks should be deleted upon completion
 5. delete legacy prep components since its non-functional
 

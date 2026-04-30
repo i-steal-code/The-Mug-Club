@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Edit inventory · Mug Club{% endblock %}
+{% block content %}
+<h1>Edit inventory line</h1>
+
+<form method="post" class="form-card">
+  <label>Item name <span class="req">*</span>
+    <input type="text" name="name" required maxlength="120" value="{{ item.item_name }}">
+  </label>
+
+  <div class="row">
+    <label>Quantity (number)
+      <input type="number" step="any" name="qty_grams" min="0"
+             value="{{ item.qty_grams if item.qty_grams is not none else 0 }}">
+    </label>
+    <label class="row" style="flex-direction:row; align-items:center; gap:8px;">
+      <input type="checkbox" name="updated_flag" id="upd" {% if item.updated_flag %}checked{% endif %}>
+      <span>Marked as updated</span>
+    </label>
+  </div>
+
+  <label>Remark
+    <input type="text" name="remark" maxlength="500" value="{{ item.remark or '' }}">
+  </label>
+
+  <div class="row">
+    <label>Source cost ($)
+      <input type="text" name="source_cost" placeholder="e.g. 12.90"
+             value="{% if item.source_cost is not none %}{{ '%.2f' % item.source_cost }}{% endif %}">
+    </label>
+    <label>Source qty (g)
+      <input type="text" name="source_qty_g" placeholder="e.g. 500"
+             value="{% if item.source_qty_g is not none %}{{ item.source_qty_g }}{% endif %}">
+    </label>
+    <label>Supplier
+      <input type="text" name="supplier" maxlength="120" value="{{ item.supplier or '' }}">
+    </label>
+  </div>
+
+  <div class="form-actions">
+    <button class="btn primary" type="submit">Save changes</button>
+    <a class="btn ghost" href="{{ url_for('inventory_list') }}">Cancel</a>
+  </div>
+</form>
+{% endblock %}

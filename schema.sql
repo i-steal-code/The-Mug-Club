@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS finance_cash_inflows (
     person_in_charge   TEXT,
     customer_name      TEXT,
     product_name       TEXT,
+    product_id         INTEGER REFERENCES products(id) ON DELETE SET NULL,
     payment_type       TEXT CHECK (payment_type IS NULL OR payment_type IN ('paynow', 'cash')),
     payment_status     TEXT CHECK (payment_status IS NULL OR payment_status IN ('paid', 'unpaid'))
 );
@@ -260,6 +261,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_assigned ON tasks(assigned_member_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status   ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_orders_status  ON orders(order_status);
 CREATE INDEX IF NOT EXISTS idx_finance_inflow_date ON finance_cash_inflows(txn_date);
+CREATE INDEX IF NOT EXISTS idx_finance_inflows_product ON finance_cash_inflows(product_id);
 CREATE INDEX IF NOT EXISTS idx_finance_outflow_date ON finance_cash_outflows(txn_date);
 CREATE INDEX IF NOT EXISTS idx_recipe_steps_recipe ON recipe_steps(recipe_id);
 CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe ON recipe_ingredients(recipe_id);
