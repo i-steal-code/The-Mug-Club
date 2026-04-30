@@ -496,3 +496,19 @@ v0.2.5
     e. you can infer and fill in the gaps for the things left unsaid
 
 v0.2.6
+patches (only bug fixes):
+1. re-consolidate all product and product names in the analytics and finance page to make all product data consistent
+2. inventory should be modifiable
+3. attempting to add a component/ingredient to a product recipe still gives error 500
+4. completed tasks should be deleted upon completion
+5. delete legacy prep components since its non-functional
+
+v0.2.7
+patches:
+1. 
+
+v0.3.0
+1. (incomplete prompt) finish order page & match to current google form
+2. add analytics graphs & remove redundant tables
+3. add proper staff accounts and logins
+4. 

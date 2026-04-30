@@ -9,7 +9,10 @@ from __future__ import annotations
 import csv
 import io
 import ipaddress
+import json
 import os
+import urllib.error
+import urllib.request
 import re
 import secrets
 import socket
@@ -42,6 +45,51 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_URL = os.environ.get("DATABASE_URL")
+
+
+def _agent_debug_log(
+    location: str,
+    message: str,
+    *,
+    hypothesis_id: str,
+    data: dict | None = None,
+    run_id: str = "pre-fix",
+) -> None:
+    # region agent log
+    payload = {
+        "sessionId": "5bc04c",
+        "runId": run_id,
+        "hypothesisId": hypothesis_id,
+        "location": location,
+        "message": message,
+        "data": data or {},
+        "timestamp": int(time.time() * 1000),
+    }
+    line = json.dumps(payload, default=str) + "\n"
+    try:
+        with open(
+            os.path.join(BASE_DIR, "debug-5bc04c.log"), "a", encoding="utf-8"
+        ) as _lf:
+            _lf.write(line)
+    except Exception:
+        pass
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:7841/ingest/d7bf6410-c1ca-4d49-8fc4-3948c0f33670",
+            data=line.encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "X-Debug-Session-Id": "5bc04c",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            resp.read()
+    except (urllib.error.URLError, TimeoutError, OSError):
+        pass
+    except Exception:
+        pass
+    # endregion
 
 # v0.2.5 — minimal shared-password auth. Single password for all staff; tracked
 # per device by a long-lived cookie. STAFF_PASSWORD env var overrides default.
@@ -2198,6 +2246,22 @@ def _insert_recipe_ingredient(
     500. The schema migration runs on first request, so this is mostly belt-and-
     braces, but it neutralises the historical recipe-ingredient 500.
     """
+    # region agent log
+    _agent_debug_log(
+        "app.py:_insert_recipe_ingredient:entry",
+        "insert args",
+        hypothesis_id="H2-args",
+        data={
+            "recipe_id": recipe_id,
+            "sort_order": sort_order,
+            "inventory_item_id": inventory_item_id,
+            "component_id": component_id,
+            "qty": qty,
+            "unit": unit,
+            "has_prep_note": bool(prep_note),
+        },
+    )
+    # endregion
     base_cols = ["recipe_id", "sort_order", "label_override", "qty_per_yield", "unit"]
     base_vals: list = [recipe_id, sort_order, label_override, qty, unit]
     if inventory_item_id is not None:
@@ -2217,6 +2281,19 @@ def _insert_recipe_ingredient(
             query(sql, tuple(vals))
             return True
         except psycopg2.Error as exc:
+            # region agent log
+            _agent_debug_log(
+                "app.py:_insert_recipe_ingredient:_exec",
+                "INSERT attempt failed",
+                hypothesis_id="H3-pg-error",
+                data={
+                    "pgcode": getattr(exc, "pgcode", None),
+                    "diag": getattr(exc, "diag", None)
+                    and getattr(exc.diag, "message_primary", None),
+                    "cols": cols,
+                },
+            )
+            # endregion
             if getattr(exc, "pgcode", None) != "42703":
                 raise
             return False
@@ -2236,6 +2313,14 @@ def _insert_recipe_ingredient(
     # Drop component_id (very old schema). For component-only lines this means
     # the line cannot be saved without a fresh migration, so surface that.
     if component_id is not None and inventory_item_id is None:
+        # region agent log
+        _agent_debug_log(
+            "app.py:_insert_recipe_ingredient:schema",
+            "raising: component-only but no component_id column path",
+            hypothesis_id="H4-runtime-schema",
+            data={"component_id": component_id},
+        )
+        # endregion
         raise RuntimeError(
             "recipe_ingredients.component_id is missing on this database. "
             "Please re-run schema migration to support component ingredient lines."
@@ -2244,8 +2329,25 @@ def _insert_recipe_ingredient(
         idx = cols2.index("component_id")
         cols3 = cols2[:idx] + cols2[idx + 1 :]
         vals3 = vals2[:idx] + vals2[idx + 1 :]
-        _exec(cols3, vals3)
-        return
+        ok3 = _exec(cols3, vals3)
+        # region agent log
+        _agent_debug_log(
+            "app.py:_insert_recipe_ingredient:drop_component",
+            "final _exec after dropping component_id",
+            hypothesis_id="H5-fallback",
+            data={"ok": ok3, "cols3": cols3},
+        )
+        # endregion
+        if ok3:
+            return
+    # region agent log
+    _agent_debug_log(
+        "app.py:_insert_recipe_ingredient:final",
+        "raising schema mismatch",
+        hypothesis_id="H4-runtime-schema",
+        data={"cols2": cols2},
+    )
+    # endregion
     raise RuntimeError("Could not insert recipe ingredient line — schema mismatch.")
 
 
@@ -2268,6 +2370,19 @@ def recipe_detail(recipe_id):
                 inventory_item_id = None
             else:
                 component_id = None
+            # region agent log
+            _agent_debug_log(
+                "app.py:recipe_detail:add_ingredient",
+                "parsed form",
+                hypothesis_id="H1-form",
+                data={
+                    "recipe_id": recipe_id,
+                    "source": source,
+                    "inventory_item_id": inventory_item_id,
+                    "component_id": component_id,
+                },
+            )
+            # endregion
             label_override = request.form.get("label_override", "").strip() or None
             prep_note = request.form.get("prep_note", "").strip() or None
             if inventory_item_id or component_id:
@@ -2286,17 +2401,53 @@ def recipe_detail(recipe_id):
                         one=True,
                     )
                     so = r["n"]
-                _insert_recipe_ingredient(
-                    recipe_id=recipe_id,
-                    sort_order=so,
-                    inventory_item_id=inventory_item_id,
-                    component_id=component_id,
-                    label_override=label_override,
-                    qty=qty,
-                    unit=unit,
-                    prep_note=prep_note,
-                )
-                flash("Ingredient line added.", "success")
+                try:
+                    _insert_recipe_ingredient(
+                        recipe_id=recipe_id,
+                        sort_order=so,
+                        inventory_item_id=inventory_item_id,
+                        component_id=component_id,
+                        label_override=label_override,
+                        qty=qty,
+                        unit=unit,
+                        prep_note=prep_note,
+                    )
+                    flash("Ingredient line added.", "success")
+                except RuntimeError as exc:
+                    # region agent log
+                    _agent_debug_log(
+                        "app.py:recipe_detail:add_ingredient",
+                        "RuntimeError from insert",
+                        hypothesis_id="H4-runtime-schema",
+                        data={"msg": str(exc)},
+                        run_id="post-fix",
+                    )
+                    # endregion
+                    flash(str(exc), "error")
+                    return redirect(
+                        url_for("recipe_detail", recipe_id=recipe_id, **back_q)
+                    )
+                except psycopg2.Error as exc:
+                    code = getattr(exc, "pgcode", None)
+                    # region agent log
+                    _agent_debug_log(
+                        "app.py:recipe_detail:add_ingredient",
+                        "psycopg2 from insert",
+                        hypothesis_id="H3-pg-error",
+                        data={"pgcode": code, "msg": str(exc)},
+                        run_id="post-fix",
+                    )
+                    # endregion
+                    if code in ("23502", "23503", "23505", "23514"):
+                        flash(
+                            "Could not save that ingredient line (the database rejected it). "
+                            "Refresh the page, pick the item again from the list, and check the quantity.",
+                            "error",
+                        )
+                        return redirect(
+                            url_for("recipe_detail", recipe_id=recipe_id, **back_q)
+                        )
+                    raise
             else:
                 flash("Pick an inventory item or component before adding the line.", "error")
         elif action == "set_yield":
