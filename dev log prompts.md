@@ -505,7 +505,8 @@ patches (only bug fixes):
 
 v0.2.7
 patches:
-1. 
+1. product names are still inconsistent in the finance sheet; re-parse product names to be normalised to the same consistent names
+2. thoroughly rework recipe creation and data handling logic (go through the database relationships, logic and creation of recipe objects step-by step) as the error 500 database rejection still occurs with no clear end in sight
 
 v0.3.0
 1. (incomplete prompt) finish order page & match to current google form

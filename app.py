@@ -9,15 +9,11 @@ from __future__ import annotations
 import csv
 import io
 import ipaddress
-import json
 import os
-import urllib.error
-import urllib.request
 import re
 import secrets
 import socket
 import threading
-import time
 from datetime import date, datetime
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -46,50 +42,6 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-change-in-production")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_URL = os.environ.get("DATABASE_URL")
 
-
-def _agent_debug_log(
-    location: str,
-    message: str,
-    *,
-    hypothesis_id: str,
-    data: dict | None = None,
-    run_id: str = "pre-fix",
-) -> None:
-    # region agent log
-    payload = {
-        "sessionId": "5bc04c",
-        "runId": run_id,
-        "hypothesisId": hypothesis_id,
-        "location": location,
-        "message": message,
-        "data": data or {},
-        "timestamp": int(time.time() * 1000),
-    }
-    line = json.dumps(payload, default=str) + "\n"
-    try:
-        with open(
-            os.path.join(BASE_DIR, "debug-5bc04c.log"), "a", encoding="utf-8"
-        ) as _lf:
-            _lf.write(line)
-    except Exception:
-        pass
-    try:
-        req = urllib.request.Request(
-            "http://127.0.0.1:7841/ingest/d7bf6410-c1ca-4d49-8fc4-3948c0f33670",
-            data=line.encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "X-Debug-Session-Id": "5bc04c",
-            },
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=2) as resp:
-            resp.read()
-    except (urllib.error.URLError, TimeoutError, OSError):
-        pass
-    except Exception:
-        pass
-    # endregion
 
 # v0.2.5 — minimal shared-password auth. Single password for all staff; tracked
 # per device by a long-lived cookie. STAFF_PASSWORD env var overrides default.
@@ -517,20 +469,15 @@ _SCHEMA_MIGRATION_DDL = [
     END $$
     """,
     "CREATE INDEX IF NOT EXISTS idx_finance_inflows_product ON finance_cash_inflows(product_id)",
-    """
-    UPDATE finance_cash_inflows f
-    SET product_id = p.id
-    FROM products p
-    WHERE f.product_id IS NULL
-      AND lower(regexp_replace(trim(COALESCE(f.product_name, '')), '\\s+', ' ', 'g'))
-        = lower(regexp_replace(trim(COALESCE(p.product_name, '')), '\\s+', ' ', 'g'))
-    """,
     # Orders get a "finance_pushed_at" stamp so completion → 1NF finance insert
     # only happens once, even if the buttons are re-clicked (idempotent).
     "ALTER TABLE orders ADD COLUMN IF NOT EXISTS finance_pushed_at TIMESTAMPTZ",
     # v0.2.5 — per-ingredient prep note + checkbox state on each recipe line.
     "ALTER TABLE recipe_ingredients ADD COLUMN IF NOT EXISTS prep_note TEXT",
     "ALTER TABLE recipe_ingredients ADD COLUMN IF NOT EXISTS prep_done BOOLEAN NOT NULL DEFAULT FALSE",
+    # v0.2.7 — `qty_per_yield` must be nullable so blank quantity stays blank.
+    # Older deploys may have created it NOT NULL; loosen it now.
+    "ALTER TABLE recipe_ingredients ALTER COLUMN qty_per_yield DROP NOT NULL",
     # v0.2.5 — weekly prep plan groundwork for the dashboard prep components card.
     """
     CREATE TABLE IF NOT EXISTS prep_plan (
@@ -661,6 +608,12 @@ def _ensure_schema_applied() -> None:
             return
         ensure_schema_only()
         _schema_ready = True
+        try:
+            _recanonicalise_products()
+        except psycopg2.Error:
+            # First-boot before products/finance tables are populated — safe to
+            # skip; the operator can rerun via the Finance page button.
+            pass
 
 
 @app.before_request
@@ -1132,6 +1085,145 @@ def _resolve_canonical(name: str | None, mapping: dict[str, str]) -> str | None:
     return name
 
 
+# v0.2.7 — display-form normaliser. Names are stored Title Case so the
+# `products` table itself becomes the source of truth for finance / analytics
+# without case-variant duplicates leaking through.
+_PRESERVE_LOWER = {"the", "a", "an", "of", "and", "or", "vs"}
+_PRESERVE_UPPER = {"id", "qr", "ml", "kg"}
+
+
+def _canonical_product_name(raw: str | None) -> str:
+    base = re.sub(r"\s+", " ", (raw or "").strip())
+    if not base:
+        return ""
+    parts = base.split(" ")
+    out: list[str] = []
+    for i, word in enumerate(parts):
+        low = word.lower()
+        if low in _PRESERVE_UPPER:
+            out.append(low.upper())
+        elif i > 0 and low in _PRESERVE_LOWER:
+            out.append(low)
+        else:
+            out.append(low[:1].upper() + low[1:])
+    return " ".join(out)
+
+
+def _recanonicalise_products() -> dict:
+    """
+    Canonicalise the `products` table and re-link `finance_cash_inflows` to it
+    so finance shows a consistent name per product (v0.2.7 patch #1).
+
+    Strategy (non-destructive):
+      1. Group products by case/whitespace-insensitive name key.
+      2. In each group, pick a survivor (lowest id). Re-point
+         `order_items.product_id` and `finance_cash_inflows.product_id` from
+         duplicates to the survivor so usage history stays intact.
+      3. Mark each duplicate `is_active = FALSE` and rename it with a
+         `(legacy #N)` suffix so the unique constraint doesn't block the
+         survivor's canonical rename below.
+      4. Rename the survivor to its canonical Title Case form.
+      5. Backfill `finance_cash_inflows.product_id` for any row still NULL via
+         the same fuzzy matcher used at import time.
+      6. Sync `finance_cash_inflows.product_name` to the linked product's
+         canonical name so the finance sheet reads cleanly.
+
+    Recipes attached to deactivated duplicates stay in place — UNIQUE
+    `recipes.product_id` is per-product so nothing collides.
+    """
+    stats = {
+        "products_renamed": 0,
+        "products_deactivated": 0,
+        "finance_rows_relinked": 0,
+        "finance_names_synced": 0,
+    }
+    conn = get_conn()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, product_name, is_active FROM products ORDER BY id"
+                )
+                products = cur.fetchall() or []
+                groups: dict[str, list[dict]] = {}
+                for p in products:
+                    key = _name_key(p["product_name"])
+                    if not key:
+                        continue
+                    groups.setdefault(key, []).append(p)
+                for _key, rows in groups.items():
+                    survivor = rows[0]
+                    duplicates = rows[1:]
+                    canonical = _canonical_product_name(survivor["product_name"]) or survivor["product_name"]
+                    if duplicates:
+                        dup_ids = [r["id"] for r in duplicates]
+                        cur.execute(
+                            "UPDATE finance_cash_inflows SET product_id = %s "
+                            "WHERE product_id = ANY(%s)",
+                            (survivor["id"], dup_ids),
+                        )
+                        stats["finance_rows_relinked"] += cur.rowcount or 0
+                        cur.execute(
+                            "UPDATE order_items SET product_id = %s "
+                            "WHERE product_id = ANY(%s)",
+                            (survivor["id"], dup_ids),
+                        )
+                        for i, dup in enumerate(duplicates, start=2):
+                            cur.execute(
+                                "UPDATE products SET is_active = FALSE, "
+                                "product_name = %s WHERE id = %s",
+                                (f"{canonical} (legacy #{i})", dup["id"]),
+                            )
+                            stats["products_deactivated"] += 1
+                    if survivor["product_name"] != canonical:
+                        cur.execute(
+                            "UPDATE products SET product_name = %s WHERE id = %s",
+                            (canonical, survivor["id"]),
+                        )
+                        stats["products_renamed"] += 1
+                cur.execute(
+                    """
+                    SELECT id, product_name FROM products
+                    WHERE is_active = TRUE AND product_name IS NOT NULL
+                    """
+                )
+                active = cur.fetchall() or []
+                canonical_lookup = {_name_key(r["product_name"]): r["product_name"] for r in active}
+                product_id_lookup = {_name_key(r["product_name"]): r["id"] for r in active}
+                cur.execute(
+                    """
+                    SELECT id, product_name FROM finance_cash_inflows
+                    WHERE product_id IS NULL AND product_name IS NOT NULL
+                    """
+                )
+                for row in cur.fetchall() or []:
+                    canonical_name = _resolve_canonical(row["product_name"], canonical_lookup)
+                    if not canonical_name:
+                        continue
+                    pid = product_id_lookup.get(_name_key(canonical_name))
+                    if not pid:
+                        continue
+                    cur.execute(
+                        "UPDATE finance_cash_inflows SET product_id = %s, "
+                        "product_name = %s WHERE id = %s",
+                        (pid, canonical_name, row["id"]),
+                    )
+                    stats["finance_rows_relinked"] += 1
+                cur.execute(
+                    """
+                    UPDATE finance_cash_inflows f
+                    SET product_name = p.product_name
+                    FROM products p
+                    WHERE f.product_id = p.id
+                      AND COALESCE(f.product_name, '') <> p.product_name
+                    """
+                )
+                stats["finance_names_synced"] += cur.rowcount or 0
+    finally:
+        conn.close()
+    return stats
+
+
 def _sql_finance_inflows_join_products() -> str:
     """
     Join finance inflow rows to `products`: prefer explicit product_id, else
@@ -1264,6 +1356,10 @@ def import_financial_csv(stream, replace: bool = False) -> tuple[int, int]:
                     pid = None
                     if product_name:
                         pid = product_id_by_key.get(_name_key(product_name))
+                        if not pid:
+                            # No matching product row — still normalise the
+                            # display form so the finance sheet stays tidy.
+                            product_name = _canonical_product_name(product_name) or product_name
                     cur.execute(
                         """
                         INSERT INTO finance_cash_inflows
@@ -1360,7 +1456,7 @@ def import_orders_csv(stream, replace: bool = False) -> int:
                         (cust, cups, total, odate, notes, pm, ost, pst),
                     )
                     order_id = cur.fetchone()["id"]
-                    pname = summary or "Imported item"
+                    pname = _canonical_product_name(summary or "Imported item") or "Imported item"
                     cur.execute(
                         """
                         INSERT INTO products (product_name, product_type, is_active)
@@ -2034,7 +2130,9 @@ def products_page():
 
         pid = request.form.get("product_id", type=int)
         rid = request.form.get("recipe_id", type=int)
-        name = request.form.get("product_name", "").strip()
+        # v0.2.7 — canonicalise product names on save so finance + analytics
+        # see one consistent display form ("Matcha Latte", not "matcha latte").
+        name = _canonical_product_name(request.form.get("product_name", ""))
         ptype = request.form.get("product_type", "special")
         cloud_type = request.form.get("cloud_type") or None
         flavour_id = request.form.get("flavour_id", type=int)
@@ -2273,10 +2371,12 @@ def _recipe_scale_factor(recipe: dict, desired: float | None) -> float:
 
 def _fetch_recipe_ingredients(recipe_id: int) -> list[dict]:
     """
-    Return enriched recipe ingredient rows. Falls back gracefully when the
-    legacy schema does not yet have prep_note / prep_done columns.
+    Return enriched recipe ingredient rows. The schema migration in
+    `_SCHEMA_MIGRATION_DDL` guarantees every column referenced here exists, so
+    this is a single SELECT — no fallback paths (v0.2.7 rework).
     """
-    sql_full = """
+    return query(
+        """
         SELECT ri.*,
                ii.item_name AS inventory_item_name,
                ii.qty_grams AS stock_qty_g,
@@ -2287,29 +2387,78 @@ def _fetch_recipe_ingredients(recipe_id: int) -> list[dict]:
         LEFT JOIN components c ON c.id = ri.component_id
         WHERE ri.recipe_id = %s
         ORDER BY ri.sort_order, ri.id
+        """,
+        (recipe_id,),
+        fetch=True,
+    ) or []
+
+
+def _add_recipe_ingredient_from_form(recipe_id: int, form) -> str | None:
     """
-    try:
-        return query(sql_full, (recipe_id,), fetch=True) or []
-    except psycopg2.Error as exc:
-        if getattr(exc, "pgcode", None) != "42703":
-            raise
-    sql_no_component = """
-        SELECT ri.*,
-               ii.item_name AS inventory_item_name,
-               ii.qty_grams AS stock_qty_g
-        FROM recipe_ingredients ri
-        LEFT JOIN inventory_items ii ON ii.id = ri.inventory_item_id
-        WHERE ri.recipe_id = %s
-        ORDER BY ri.sort_order, ri.id
+    Validate the recipe-detail "add ingredient" form and insert one row.
+
+    Returns ``None`` on success, or a human-readable error string. All input
+    parsing happens here so the INSERT in `_insert_recipe_ingredient` is a
+    single, predictable statement (v0.2.7 rework — replaces the layered
+    psycopg2 error fallback ladder that produced the recurring 500s).
     """
-    rows = query(sql_no_component, (recipe_id,), fetch=True) or []
-    for r in rows:
-        r.setdefault("component_id", None)
-        r.setdefault("component_name", None)
-        r.setdefault("component_type", None)
-        r.setdefault("prep_note", None)
-        r.setdefault("prep_done", False)
-    return rows
+    source = (form.get("source") or "inventory").strip()
+    inventory_item_id = form.get("inventory_item_id", type=int)
+    component_id = form.get("component_id", type=int)
+    if source == "component":
+        inventory_item_id = None
+    else:
+        component_id = None
+    if not (inventory_item_id or component_id):
+        return "Pick an inventory item or component before adding the line."
+    if inventory_item_id is not None:
+        ok = query(
+            "SELECT 1 AS ok FROM inventory_items WHERE id = %s",
+            (inventory_item_id,),
+            fetch=True,
+            one=True,
+        )
+        if not ok:
+            return "That inventory item no longer exists. Refresh the page and pick again."
+    if component_id is not None:
+        ok = query(
+            "SELECT 1 AS ok FROM components WHERE id = %s",
+            (component_id,),
+            fetch=True,
+            one=True,
+        )
+        if not ok:
+            return "That component no longer exists. Refresh the page and pick again."
+    qraw = (form.get("qty_per_yield") or "").strip()
+    qty: float | None = None
+    if qraw:
+        try:
+            qty = float(qraw)
+        except ValueError:
+            return "Quantity must be a number (or blank)."
+        if qty < 0:
+            return "Quantity cannot be negative."
+    unit = (form.get("unit") or "g").strip() or "g"
+    label_override = (form.get("label_override") or "").strip() or None
+    prep_note = (form.get("prep_note") or "").strip() or None
+    so_row = query(
+        "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM recipe_ingredients WHERE recipe_id = %s",
+        (recipe_id,),
+        fetch=True,
+        one=True,
+    )
+    sort_order = (so_row or {}).get("n") or 0
+    _insert_recipe_ingredient(
+        recipe_id=recipe_id,
+        sort_order=int(sort_order),
+        inventory_item_id=inventory_item_id,
+        component_id=component_id,
+        label_override=label_override,
+        qty=qty,
+        unit=unit,
+        prep_note=prep_note,
+    )
+    return None
 
 
 def _insert_recipe_ingredient(
@@ -2324,126 +2473,30 @@ def _insert_recipe_ingredient(
     prep_note: str | None,
 ) -> None:
     """
-    Insert a recipe ingredient line. Tries the full v0.2.5 schema first
-    (component_id + prep_note + prep_done) and progressively falls back to older
-    column sets so legacy Supabase deploys still work without crashing with a
-    500. The schema migration runs on first request, so this is mostly belt-and-
-    braces, but it neutralises the historical recipe-ingredient 500.
+    Single canonical INSERT for a recipe ingredient line (v0.2.7 rework).
+
+    Inputs are validated by the caller before this function runs; all columns
+    referenced are guaranteed by `_SCHEMA_MIGRATION_DDL`, so we don't need
+    schema-shape fallbacks. `prep_done` defaults to FALSE in the table.
     """
-    # region agent log
-    _agent_debug_log(
-        "app.py:_insert_recipe_ingredient:entry",
-        "insert args",
-        hypothesis_id="H2-args",
-        data={
-            "recipe_id": recipe_id,
-            "sort_order": sort_order,
-            "inventory_item_id": inventory_item_id,
-            "component_id": component_id,
-            "qty": qty,
-            "unit": unit,
-            "has_prep_note": bool(prep_note),
-        },
+    query(
+        """
+        INSERT INTO recipe_ingredients
+          (recipe_id, sort_order, inventory_item_id, component_id,
+           label_override, qty_per_yield, unit, prep_note)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+        """,
+        (
+            recipe_id,
+            sort_order,
+            inventory_item_id,
+            component_id,
+            label_override,
+            qty,
+            unit,
+            prep_note,
+        ),
     )
-    # endregion
-    # Some deployments treated qty_per_yield as NOT NULL; 0 is a safe placeholder.
-    qty_db = float(qty) if qty is not None else 0.0
-    base_cols = ["recipe_id", "sort_order", "label_override", "qty_per_yield", "unit"]
-    base_vals: list = [recipe_id, sort_order, label_override, qty_db, unit]
-    if inventory_item_id is not None:
-        base_cols.append("inventory_item_id")
-        base_vals.append(inventory_item_id)
-    if component_id is not None:
-        base_cols.append("component_id")
-        base_vals.append(component_id)
-    if prep_note:
-        base_cols.append("prep_note")
-        base_vals.append(prep_note)
-    base_cols.append("prep_done")
-    base_vals.append(False)
-
-    def _exec(cols: list[str], vals: list) -> bool:
-        placeholders = ",".join(["%s"] * len(cols))
-        sql = f"INSERT INTO recipe_ingredients ({', '.join(cols)}) VALUES ({placeholders})"
-        try:
-            query(sql, tuple(vals))
-            return True
-        except psycopg2.Error as exc:
-            # region agent log
-            _agent_debug_log(
-                "app.py:_insert_recipe_ingredient:_exec",
-                "INSERT attempt failed",
-                hypothesis_id="H3-pg-error",
-                data={
-                    "pgcode": getattr(exc, "pgcode", None),
-                    "diag": getattr(exc, "diag", None)
-                    and getattr(exc.diag, "message_primary", None),
-                    "cols": cols,
-                },
-            )
-            # endregion
-            if getattr(exc, "pgcode", None) != "42703":
-                raise
-            return False
-
-    # Full attempt — v0.2.5 schema, then strip prep_done / prep_note for older DBs.
-    work_cols, work_vals = list(base_cols), list(base_vals)
-    if _exec(work_cols, work_vals):
-        return
-    if "prep_done" in work_cols:
-        i = work_cols.index("prep_done")
-        work_cols = work_cols[:i] + work_cols[i + 1 :]
-        work_vals = work_vals[:i] + work_vals[i + 1 :]
-        if _exec(work_cols, work_vals):
-            return
-    # Drop prep_note (older schema) and retry.
-    if "prep_note" in work_cols:
-        idx = work_cols.index("prep_note")
-        cols2 = work_cols[:idx] + work_cols[idx + 1 :]
-        vals2 = work_vals[:idx] + work_vals[idx + 1 :]
-        if _exec(cols2, vals2):
-            return
-    else:
-        cols2, vals2 = work_cols, work_vals
-    # Drop component_id (very old schema). For component-only lines this means
-    # the line cannot be saved without a fresh migration, so surface that.
-    if component_id is not None and inventory_item_id is None:
-        # region agent log
-        _agent_debug_log(
-            "app.py:_insert_recipe_ingredient:schema",
-            "raising: component-only but no component_id column path",
-            hypothesis_id="H4-runtime-schema",
-            data={"component_id": component_id},
-        )
-        # endregion
-        raise RuntimeError(
-            "recipe_ingredients.component_id is missing on this database. "
-            "Please re-run schema migration to support component ingredient lines."
-        )
-    if "component_id" in cols2:
-        idx = cols2.index("component_id")
-        cols3 = cols2[:idx] + cols2[idx + 1 :]
-        vals3 = vals2[:idx] + vals2[idx + 1 :]
-        ok3 = _exec(cols3, vals3)
-        # region agent log
-        _agent_debug_log(
-            "app.py:_insert_recipe_ingredient:drop_component",
-            "final _exec after dropping component_id",
-            hypothesis_id="H5-fallback",
-            data={"ok": ok3, "cols3": cols3},
-        )
-        # endregion
-        if ok3:
-            return
-    # region agent log
-    _agent_debug_log(
-        "app.py:_insert_recipe_ingredient:final",
-        "raising schema mismatch",
-        hypothesis_id="H4-runtime-schema",
-        data={"cols2": cols2},
-    )
-    # endregion
-    raise RuntimeError("Could not insert recipe ingredient line — schema mismatch.")
 
 
 @app.route("/recipes/<int:recipe_id>", methods=["GET", "POST"])
@@ -2457,94 +2510,12 @@ def recipe_detail(recipe_id):
     if request.method == "POST":
         action = request.form.get("action")
         if action == "add_ingredient":
-            # Source of the line: inventory item OR reusable component (v0.2.3).
-            source = (request.form.get("source") or "inventory").strip()
-            inventory_item_id = request.form.get("inventory_item_id", type=int)
-            component_id = request.form.get("component_id", type=int)
-            if source == "component":
-                inventory_item_id = None
+            err = _add_recipe_ingredient_from_form(recipe_id, request.form)
+            if err:
+                flash(err, "error")
             else:
-                component_id = None
-            # region agent log
-            _agent_debug_log(
-                "app.py:recipe_detail:add_ingredient",
-                "parsed form",
-                hypothesis_id="H1-form",
-                data={
-                    "recipe_id": recipe_id,
-                    "source": source,
-                    "inventory_item_id": inventory_item_id,
-                    "component_id": component_id,
-                },
-            )
-            # endregion
-            label_override = request.form.get("label_override", "").strip() or None
-            prep_note = request.form.get("prep_note", "").strip() or None
-            if inventory_item_id or component_id:
-                qraw = (request.form.get("qty_per_yield") or "").strip()
-                try:
-                    qty = float(qraw) if qraw else None
-                except ValueError:
-                    qty = None
-                unit = (request.form.get("unit") or "g").strip() or "g"
-                so = request.form.get("sort_order", type=int)
-                if so is None:
-                    r = query(
-                        "SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM recipe_ingredients WHERE recipe_id = %s",
-                        (recipe_id,),
-                        fetch=True,
-                        one=True,
-                    )
-                    so = r["n"]
-                try:
-                    _insert_recipe_ingredient(
-                        recipe_id=recipe_id,
-                        sort_order=so,
-                        inventory_item_id=inventory_item_id,
-                        component_id=component_id,
-                        label_override=label_override,
-                        qty=qty,
-                        unit=unit,
-                        prep_note=prep_note,
-                    )
-                    flash("Ingredient line added.", "success")
-                except RuntimeError as exc:
-                    # region agent log
-                    _agent_debug_log(
-                        "app.py:recipe_detail:add_ingredient",
-                        "RuntimeError from insert",
-                        hypothesis_id="H4-runtime-schema",
-                        data={"msg": str(exc)},
-                        run_id="post-fix",
-                    )
-                    # endregion
-                    flash(str(exc), "error")
-                    return redirect(
-                        url_for("recipe_detail", recipe_id=recipe_id, **back_q)
-                    )
-                except psycopg2.Error as exc:
-                    code = getattr(exc, "pgcode", None)
-                    # region agent log
-                    _agent_debug_log(
-                        "app.py:recipe_detail:add_ingredient",
-                        "psycopg2 from insert",
-                        hypothesis_id="H3-pg-error",
-                        data={"pgcode": code, "msg": str(exc)},
-                        run_id="post-fix",
-                    )
-                    # endregion
-                    if code in ("23502", "23503", "23505", "23514"):
-                        flash(
-                            "Could not save that ingredient line (the database rejected it). "
-                            "Refresh the page, pick the item again from the list, and check the quantity.",
-                            "error",
-                        )
-                        return redirect(
-                            url_for("recipe_detail", recipe_id=recipe_id, **back_q)
-                        )
-                    raise
-            else:
-                flash("Pick an inventory item or component before adding the line.", "error")
+                flash("Ingredient line added.", "success")
+            return redirect(url_for("recipe_detail", recipe_id=recipe_id, **back_q))
         elif action == "set_yield":
             try:
                 by = float(request.form.get("base_yield_cups") or 1)
@@ -2700,24 +2671,14 @@ def recipe_ingredient_toggle_prep(recipe_id, ingredient_id):
     don't appear in the checklist UI, so this is only ever triggered for rows
     that have an instruction.
     """
-    try:
-        query(
-            """
-            UPDATE recipe_ingredients
-            SET prep_done = NOT COALESCE(prep_done, FALSE)
-            WHERE id = %s AND recipe_id = %s
-            """,
-            (ingredient_id, recipe_id),
-        )
-    except psycopg2.Error as exc:
-        if getattr(exc, "pgcode", None) == "42703":
-            flash(
-                "Ingredient prep checklist requires the v0.2.5 schema migration. "
-                "Re-run the schema bootstrap to add prep_note + prep_done columns.",
-                "error",
-            )
-        else:
-            raise
+    query(
+        """
+        UPDATE recipe_ingredients
+        SET prep_done = NOT COALESCE(prep_done, FALSE)
+        WHERE id = %s AND recipe_id = %s
+        """,
+        (ingredient_id, recipe_id),
+    )
     return redirect(url_for("recipe_detail", recipe_id=recipe_id))
 
 
@@ -2728,20 +2689,11 @@ def recipe_ingredient_set_prep_note(recipe_id, ingredient_id):
     empty string clears the note (so the row leaves the checklist).
     """
     note = (request.form.get("prep_note") or "").strip() or None
-    try:
-        query(
-            "UPDATE recipe_ingredients SET prep_note = %s WHERE id = %s AND recipe_id = %s",
-            (note, ingredient_id, recipe_id),
-        )
-        flash("Prep note saved.", "success")
-    except psycopg2.Error as exc:
-        if getattr(exc, "pgcode", None) == "42703":
-            flash(
-                "Prep notes need the v0.2.5 schema migration to be applied first.",
-                "error",
-            )
-        else:
-            raise
+    query(
+        "UPDATE recipe_ingredients SET prep_note = %s WHERE id = %s AND recipe_id = %s",
+        (note, ingredient_id, recipe_id),
+    )
+    flash("Prep note saved.", "success")
     return redirect(url_for("recipe_detail", recipe_id=recipe_id))
 
 
@@ -3152,6 +3104,29 @@ def finance_import_tracker():
         )
     except Exception as exc:  # noqa: BLE001
         flash(f"Financial import failed: {exc}", "error")
+    return redirect(url_for("finance_summary"))
+
+
+@app.post("/finance/recanonicalise-products")
+def finance_recanonicalise_products():
+    """
+    Operator-triggered re-canonicalisation pass. Useful after manual edits or
+    a fresh CSV import to make sure every finance row reads with the same
+    canonical product name (v0.2.7 patch #1).
+    """
+    try:
+        stats = _recanonicalise_products()
+    except psycopg2.Error as exc:
+        flash(f"Re-canonicalisation failed: {exc}", "error")
+        return redirect(url_for("finance_summary"))
+    flash(
+        "Product names re-canonicalised — "
+        f"{stats['products_renamed']} renamed, "
+        f"{stats['products_deactivated']} duplicates retired, "
+        f"{stats['finance_rows_relinked']} finance rows relinked, "
+        f"{stats['finance_names_synced']} finance names synced.",
+        "success",
+    )
     return redirect(url_for("finance_summary"))
 
 

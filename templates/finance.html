@@ -11,6 +11,10 @@
   <form method="post" action="{{ url_for('finance_import_tracker') }}" class="inline">
     <button class="btn" type="submit">Import financial tracker CSV</button>
   </form>
+  <form method="post" action="{{ url_for('finance_recanonicalise_products') }}" class="inline"
+        onsubmit="return confirm('Re-canonicalise product names? Duplicate products will be deactivated and finance rows relinked to the survivor.');">
+    <button class="btn" type="submit" title="Re-parse product names so finance rows show one canonical name per product">Re-canonicalise product names</button>
+  </form>
   <a class="btn ghost" href="{{ url_for('export_table', name='finance_inflows') }}">Export inflows CSV</a>
   <a class="btn ghost" href="{{ url_for('export_table', name='finance_outflows') }}">Export outflows CSV</a>
   <a class="btn ghost" href="{{ url_for('export_table', name='margin_menu_items') }}">Export menu margins CSV</a>
